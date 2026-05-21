@@ -9,7 +9,7 @@
   base    = "frontend"
   command = "npm run build"
   # Vite outputs to frontend/dist — publish path is relative to `base`.
-  publish = "frontend/dist"
+  publish = "dist"
 
 # Environment variables injected at build time.
 # Sensitive values (VITE_API_URL) should be set in the Netlify UI under
