@@ -1,0 +1,39 @@
+# =============================================================================
+# netlify.toml — BugLens Frontend Deployment
+#
+# Docs: https://docs.netlify.com/configure-builds/file-based-configuration/
+# =============================================================================
+
+[build]
+  # All build commands run from inside the frontend workspace.
+  base    = "frontend"
+  command = "npm run build"
+  # Vite outputs to frontend/dist — publish path is relative to `base`.
+  publish = "dist"
+
+# Environment variables injected at build time.
+# Sensitive values (VITE_API_URL) should be set in the Netlify UI under
+# Site configuration → Environment variables — NOT committed here.
+[build.environment]
+  NODE_VERSION = "20"
+
+# ---------------------------------------------------------------------------
+# SPA fallback — required for client-side routing (TanStack Router).
+# Without this, any direct URL hit (e.g. /dashboard) returns Netlify's 404
+# instead of letting the React app handle it.
+# ---------------------------------------------------------------------------
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+# ---------------------------------------------------------------------------
+# Security headers — defence-in-depth for a production SaaS.
+# ---------------------------------------------------------------------------
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options        = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy        = "strict-origin-when-cross-origin"
+    Permissions-Policy     = "camera=(), microphone=(), geolocation=()"

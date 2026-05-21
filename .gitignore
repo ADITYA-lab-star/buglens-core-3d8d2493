@@ -1,32 +1,57 @@
-# Logs
-logs
+# =============================================================================
+# BugLens Monorepo — Root .gitignore
+# =============================================================================
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.output/
+frontend/.vinxi/
+frontend/.tanstack/
+frontend/.nitro/
+frontend/.wrangler/
+frontend/.dev.vars
+frontend/*.local
+frontend/.env.local
+frontend/.env.*.local
+
+# ── Backend ───────────────────────────────────────────────────────────────────
+backend/venv/
+backend/.chroma_db/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.env           # secrets — NEVER commit
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-.output
-.vinxi
-.tanstack/**
-.nitro
-*.local
-
-# Wrangler / Cloudflare
-.wrangler/
-.dev.vars
-
-# Editor directories and files
+# ── Editor & OS ───────────────────────────────────────────────────────────────
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+Thumbs.db
+
+# ── Cloudflare / Wrangler ─────────────────────────────────────────────────────
+.wrangler/
+
+# ── Python bytecode (root-level scripts) ──────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Temporary root venv / chroma (pre-restructure artefacts) ─────────────────
+venv/
+.chroma_db/
