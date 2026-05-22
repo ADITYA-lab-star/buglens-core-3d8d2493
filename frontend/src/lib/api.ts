@@ -17,19 +17,34 @@ export const API_BASE_URL: string =
 
 /** Shape returned by GET /dashboard/stats */
 export interface DashboardStats {
+  /** All-time review count for this user. */
   total_reviews_count: number;
+  /** Reviews created in the current calendar month. */
+  monthly_reviews_count: number;
+  /** Reviews with severity_level == "critical". */
   critical_bugs_caught: number;
-  /** Mocked on the backend until a response_time_ms column is added. */
+  /** Mean response_time_ms in seconds. 0 when field not yet populated. */
   average_response_time: number;
+  /** Per-severity breakdown for the ring/bar chart. */
+  severity_breakdown: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+  };
 }
 
 /** Shape of each item returned by GET /dashboard/recent */
 export interface RecentReview {
-  id: number;
+  id: string;
   repository_name: string;
   file_name: string;
   ai_model_used: string;
   severity_level: string;
+  language: string;
+  /** "completed" | "failed" — stored on the review document. */
+  status: string;
   review_result: Record<string, unknown>;
 }
 
@@ -61,6 +76,7 @@ export interface ChatQueryRequest {
 // ---------------------------------------------------------------------------
 // Utility: typed JSON fetch wrapper
 // ---------------------------------------------------------------------------
+import { getIdToken } from "@/context/AuthContext";
 
 /**
  * Convenience wrapper around `fetch` for plain JSON endpoints.
@@ -71,9 +87,16 @@ export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const token = await getIdToken();
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   const res = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
+    headers,
   });
 
   if (!res.ok) {

@@ -20,6 +20,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { API_BASE_URL, type ReviewStreamRequest } from "@/lib/api";
+import { getIdToken } from "@/context/AuthContext";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,9 +125,15 @@ export function useReviewStream(): UseReviewStreamReturn {
       setIsStreaming(true);
 
       try {
+        const token = await getIdToken();
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
         const response = await fetch(`${API_BASE_URL}/reviews/stream`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify(request),
           signal: controller.signal,
         });

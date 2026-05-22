@@ -22,6 +22,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { API_BASE_URL, type ChatQueryRequest, type ContextChunk } from "@/lib/api";
+import { getIdToken } from "@/context/AuthContext";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,9 +122,15 @@ export function useRagChat(): UseRagChatReturn {
       setIsStreaming(true);
 
       try {
+        const token = await getIdToken();
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
         const response = await fetch(`${API_BASE_URL}/chat/query`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             repo_name: request.repo_name,
             query: request.query,

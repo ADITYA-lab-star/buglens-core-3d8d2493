@@ -126,10 +126,10 @@ function Index() {
             </Link>
             
             <div className="flex items-center gap-4">
-              <Link to="/dashboard">
+              <Link to="/login">
                 <Button variant="ghost" className="text-white/70 hover:text-white hover:bg-white/5 transition-colors hidden sm:flex">Sign In</Button>
               </Link>
-              <Link to="/dashboard">
+              <Link to="/login">
                 <Button className="bg-white text-black hover:bg-white/90 shadow-[0_0_20px_rgba(255,255,255,0.1)] transition-all">
                   Get Started
                 </Button>

@@ -5,9 +5,9 @@ import { cn } from "@/lib/utils";
 const items = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Reviews", url: "/workspace", icon: GitPullRequest },
-  { title: "Repositories", url: "/dashboard", icon: FolderGit2 },
-  { title: "Analytics", url: "/dashboard", icon: BarChart3 },
-  { title: "Settings", url: "/dashboard", icon: Settings },
+  { title: "Repositories", url: "/repositories", icon: FolderGit2 },
+  { title: "Analytics", url: "/analytics", icon: BarChart3 },
+  { title: "Settings", url: "/settings", icon: Settings },
 ] as const;
 
 export function AppSidebar() {

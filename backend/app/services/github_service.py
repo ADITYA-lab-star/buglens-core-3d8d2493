@@ -10,9 +10,10 @@ GITHUB_API_BASE = "https://api.github.com"
 class GitHubService:
     """Async GitHub REST API client for PR diff extraction and commenting."""
 
-    def __init__(self) -> None:
+    def __init__(self, access_token: str | None = None) -> None:
+        token = access_token or settings.GITHUB_ACCESS_TOKEN
         self._headers = {
-            "Authorization": f"Bearer {settings.GITHUB_ACCESS_TOKEN}",
+            "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
 

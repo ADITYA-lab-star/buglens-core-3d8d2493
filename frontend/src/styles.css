@@ -153,3 +153,51 @@
     font-family: var(--font-mono);
   }
 }
+
+/* ── Workspace: thin scrollbar ─────────────────────────────────────────────── */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(1 0 0 / 12%) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: oklch(1 0 0 / 12%);
+  border-radius: 9999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(1 0 0 / 22%);
+}
+
+/* ── Workspace: markdown prose spacing ─────────────────────────────────────── */
+.workspace-markdown {
+  word-break: break-word;
+}
+.workspace-markdown code {
+  font-family: var(--font-mono);
+}
+
+/* ── RepoChat: react-markdown prose reset ──────────────────────────────────── */
+.repo-markdown {
+  color: var(--foreground);
+  font-size: 0.8125rem;        /* 13px */
+  line-height: 1.6;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.repo-markdown > :first-child { margin-top: 0 !important; }
+.repo-markdown > :last-child  { margin-bottom: 0 !important; }
+
+/* Syntax highlighter scrollbar */
+.repo-markdown pre::-webkit-scrollbar { height: 5px; }
+.repo-markdown pre::-webkit-scrollbar-track { background: transparent; }
+.repo-markdown pre::-webkit-scrollbar-thumb {
+  background-color: oklch(1 0 0 / 12%);
+  border-radius: 9999px;
+}
+
+

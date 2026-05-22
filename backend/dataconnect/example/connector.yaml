@@ -1,0 +1,6 @@
+# backend/dataconnect/example/connector.yaml
+connectorId: "example"
+generate:
+  javascriptSdk:
+    outputDir: "../../frontend/src/lib/dataconnect-generated"
+    package: "@buglens/generated"

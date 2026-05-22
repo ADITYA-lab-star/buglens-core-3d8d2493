@@ -73,6 +73,18 @@ class RAGService:
             metadata={"hnsw:space": "cosine"},
         )
 
+    def list_collections(self) -> list[str]:
+        """Return the names of all ChromaDB collections in the persistent store.
+
+        Each name corresponds to a previously ingested repository.
+        The raw ChromaDB collection names use underscores in place of slashes/dots.
+        """
+        try:
+            return [col.name for col in self._client.list_collections()]
+        except Exception as exc:
+            logger.warning("list_collections failed: %s", exc)
+            return []
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -81,12 +93,16 @@ class RAGService:
         self,
         repo_name: str,
         files: list[dict[str, str]],  # [{"path": "src/foo.py", "content": "..."}]
+        gemini_api_key: str | None = None,
+        openai_api_key: str | None = None,
     ) -> int:
         """Chunk, embed, and upsert all *files* into the repo's collection.
 
         Args:
             repo_name: Used as the ChromaDB collection name.
             files:     List of dicts with ``path`` and ``content`` keys.
+            gemini_api_key: Optional custom Gemini API key.
+            openai_api_key: Optional custom OpenAI API key.
 
         Returns:
             Total number of chunks upserted.
@@ -106,7 +122,7 @@ class RAGService:
 
             # Embed all chunks concurrently for this file
             embeddings: list[list[float]] = await asyncio.gather(
-                *[get_embedding(chunk) for chunk in chunks]
+                *[get_embedding(chunk, gemini_api_key=gemini_api_key, openai_api_key=openai_api_key) for chunk in chunks]
             )
 
             ids       = [f"{file_path}::chunk_{i}" for i in range(len(chunks))]
@@ -128,6 +144,8 @@ class RAGService:
         repo_name: str,
         user_query: str,
         top_k: int = TOP_K,
+        gemini_api_key: str | None = None,
+        openai_api_key: str | None = None,
     ) -> list[dict[str, Any]]:
         """Semantically search the repo collection and return the top-k chunks.
 
@@ -135,13 +153,19 @@ class RAGService:
             repo_name:  The collection to search.
             user_query: The natural-language question or code fragment.
             top_k:      Number of results to return.
+            gemini_api_key: Optional custom Gemini API key.
+            openai_api_key: Optional custom OpenAI API key.
 
         Returns:
             A list of dicts, each containing ``document``, ``file_path``,
             ``chunk_index``, and ``distance``.
         """
         collection = self._collection(repo_name)
-        query_embedding = await get_embedding(user_query)
+        query_embedding = await get_embedding(
+            user_query,
+            gemini_api_key=gemini_api_key,
+            openai_api_key=openai_api_key,
+        )
 
         results = collection.query(
             query_embeddings=[query_embedding],

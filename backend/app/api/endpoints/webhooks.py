@@ -4,9 +4,11 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status, Depends
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
+from app.db.mongo import get_mongo_db
 from app.services.github_service import GitHubService
 from app.services.llm_factory import get_llm_service
 
@@ -19,7 +21,7 @@ router = APIRouter()
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _verify_signature(payload_bytes: bytes, signature_header: str | None) -> None:
+def _verify_signature(payload_bytes: bytes, signature_header: str | None, secret: str) -> None:
     """Verify the X-Hub-Signature-256 header from GitHub.
 
     Raises HTTP 401 if the signature is absent or invalid.
@@ -38,7 +40,7 @@ def _verify_signature(payload_bytes: bytes, signature_header: str | None) -> Non
 
     expected_digest = signature_header[len("sha256="):]
     computed_digest = hmac.new(
-        settings.GITHUB_WEBHOOK_SECRET.encode("utf-8"),
+        secret.encode("utf-8"),
         payload_bytes,
         hashlib.sha256,
     ).hexdigest()
@@ -87,14 +89,17 @@ def _build_review_comment(analysis: dict) -> str:
 @router.post("/github", status_code=status.HTTP_204_NO_CONTENT)
 async def github_webhook(
     request: Request,
+    user_id: str | None = None,
     x_hub_signature_256: str | None = Header(default=None),
     x_github_event: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_mongo_db),
 ) -> None:
     """Receive and process GitHub webhook events.
 
     Security:
         Verifies the ``X-Hub-Signature-256`` header using HMAC-SHA256 and the
-        ``GITHUB_WEBHOOK_SECRET`` from the environment before any processing.
+        user-specific ``webhook_secret`` from the database (or fallback env secret)
+        before any processing.
 
     Handled events:
         - ``pull_request`` with action ``opened`` or ``synchronize``:
@@ -102,9 +107,25 @@ async def github_webhook(
             2. Sends the diff to the configured LLM for a structured review.
             3. Posts the formatted review as a comment on the PR timeline.
     """
+    # Retrieve user-specific webhook secret and GitHub token from MongoDB if user_id is provided
+    webhook_secret = settings.GITHUB_WEBHOOK_SECRET
+    github_access_token = settings.GITHUB_ACCESS_TOKEN
+    gemini_api_key = None
+    openai_api_key = None
+
+    if user_id:
+        user_settings = await db.user_settings.find_one({"uid": user_id})
+        if user_settings:
+            webhook_secret = user_settings.get("webhook_secret", webhook_secret)
+            github_access_token = user_settings.get("github_access_token", github_access_token)
+            gemini_api_key = user_settings.get("gemini_api_key")
+            openai_api_key = user_settings.get("openai_api_key")
+        else:
+            logger.warning("No user settings found in MongoDB for user_id=%s. Using fallback credentials.", user_id)
+
     # ---- 1. Read raw body for signature verification -----------------------
     payload_bytes: bytes = await request.body()
-    _verify_signature(payload_bytes, x_hub_signature_256)
+    _verify_signature(payload_bytes, x_hub_signature_256, webhook_secret)
 
     # ---- 2. Parse payload ---------------------------------------------------
     try:
@@ -131,6 +152,7 @@ async def github_webhook(
     try:
         repo_full_name: str = payload["repository"]["full_name"]
         pull_number: int = payload["number"]
+        pr_url: str = payload["pull_request"]["url"]
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -138,11 +160,12 @@ async def github_webhook(
         )
 
     logger.info(
-        "Processing PR #%s for %s (action=%s)", pull_number, repo_full_name, action
+        "Processing PR #%s (%s) for %s (action=%s)", 
+        pull_number, pr_url, repo_full_name, action
     )
 
     # ---- 5. Fetch the PR diff ----------------------------------------------
-    github = GitHubService()
+    github = GitHubService(access_token=github_access_token)
     try:
         diff_text: str = await github.get_pr_diff(repo_full_name, pull_number)
     except Exception as exc:
@@ -160,7 +183,7 @@ async def github_webhook(
         print(f"DEBUG: diff length is {len(diff_text)}")
 
     # ---- 6. Run AI review on the diff --------------------------------------
-    llm = get_llm_service("gemini")  # Using Gemini for PR webhook reviews
+    llm = get_llm_service("gemini", api_key=gemini_api_key)  # Using Gemini for PR webhook reviews
     try:
         analysis: dict = await llm.analyze_code(diff_text, language="diff")
         analysis["model"] = "gemini"
