@@ -521,6 +521,13 @@ export function Settings() {
                           <Key className="size-4 text-muted-foreground" />
                           Custom API Keys (Optional)
                         </h3>
+
+                        <div className="bg-primary/5 rounded-lg border border-primary/20 p-3 text-[11px] leading-relaxed text-muted-foreground flex gap-2">
+                          <Info className="size-4 text-primary shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Note on Fallback:</strong> If you leave these custom keys blank, the BugLens backend automatically falls back to system-wide default keys configured in the host environment's <code className="text-foreground bg-muted/40 px-1 py-0.5 rounded font-mono">.env</code> file. Adding your own keys acts as a personal override.
+                          </span>
+                        </div>
                         
                         {/* OpenAI API Key */}
                         <div className="space-y-2">
