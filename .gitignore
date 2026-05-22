@@ -13,8 +13,10 @@ frontend/.nitro/
 frontend/.wrangler/
 frontend/.dev.vars
 frontend/*.local
+frontend/.env
 frontend/.env.local
 frontend/.env.*.local
+
 
 # ── Backend ───────────────────────────────────────────────────────────────────
 backend/venv/

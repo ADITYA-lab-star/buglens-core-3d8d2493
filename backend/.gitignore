@@ -64,6 +64,21 @@ node_modules/
 
 # dotenv environment variables file
 .env
+.env.*
 
 # dataconnect generated files
 .dataconnect
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# Database files
+.chroma_db/
+
+# Temporary test / probe scripts
+test*.py
+tmp_*.py
+temp_*.py
+
