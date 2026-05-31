@@ -9,7 +9,7 @@
 // Render backend URL, e.g. https://buglens-api.onrender.com/api/v1
 // In local dev, it falls back to localhost automatically — no .env needed.
 export const API_BASE_URL: string =
-  import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+  import.meta.env.VITE_API_URL || "https://buglens-core-3d8d2493.onrender.com/api/v1";
 
 // ---------------------------------------------------------------------------
 // Shared types that mirror the FastAPI Pydantic schemas

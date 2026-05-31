@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "https://buglens-core-3d8d2493.onrender.com";
 
 export function Settings() {
   const { user } = useAuth();

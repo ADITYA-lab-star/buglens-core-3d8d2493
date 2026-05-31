@@ -81,7 +81,7 @@ const MODELS = [
   { id: "gemini", label: "Gemini 2.5", badge: "Google" },
 ];
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "https://buglens-core-3d8d2493.onrender.com";
 
 // ─── CodeEditor ───────────────────────────────────────────────────────────────
 function CodeEditor({
