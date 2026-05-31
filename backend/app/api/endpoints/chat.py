@@ -22,15 +22,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Shared RAGService instance (ChromaDB client is thread-safe)
-_rag = RAGService()
-
 
 # ---------------------------------------------------------------------------
 # Helper: build & stream a RAG SSE response
 # ---------------------------------------------------------------------------
 async def _rag_event_stream(
     body: ChatQueryRequest,
+    db: AsyncIOMotorDatabase,
     gemini_api_key: str | None = None,
     openai_api_key: str | None = None,
 ) -> AsyncIterator[str]:
@@ -42,16 +40,18 @@ async def _rag_event_stream(
         event: done     — empty terminator
         event: error    — on failure
     """
-    # 1. Vector search
+    rag = RAGService(db)
+
+    # 1. Atlas Vector Search
     try:
-        raw_chunks = await _rag.query_repository(
+        raw_chunks = await rag.query_repository(
             body.repo_name,
             body.query,
             gemini_api_key=gemini_api_key,
             openai_api_key=openai_api_key,
         )
     except Exception as exc:
-        logger.exception("ChromaDB query failed for '%s'", body.repo_name)
+        logger.exception("Atlas vector search failed for '%s'", body.repo_name)
         yield f"event: error\ndata: Vector search failed: {exc}\n\n"
         yield "event: done\ndata: \n\n"
         return
@@ -59,7 +59,7 @@ async def _rag_event_stream(
     if not raw_chunks:
         yield (
             f"event: error\ndata: No indexed content found for repository "
-            f"'{body.repo_name}'. Run ingest.py first.\n\n"
+            f"'{body.repo_name}'. Run ingest_mongo.py first.\n\n"
         )
         yield "event: done\ndata: \n\n"
         return
@@ -93,7 +93,6 @@ async def _rag_event_stream(
     llm = get_llm_service(body.preferred_model, api_key=llm_api_key)
     try:
         async for token in llm.stream_chat_with_context(augmented_query):
-            # Escape newlines so each SSE message stays on one line
             safe = token.replace("\\", "\\\\").replace("\n", "\\n")
             yield f"event: token\ndata: {safe}\n\n"
     except Exception as exc:
@@ -110,14 +109,9 @@ async def _rag_event_stream(
 async def ingest_repository(
     body: IngestRequest,
     db: AsyncIOMotorDatabase = Depends(get_mongo_db),
-    current_user: dict = Depends(get_firebase_user)
+    current_user: dict = Depends(get_firebase_user),
 ) -> IngestResponse:
-    """Chunk, embed, and store a repository's source files in ChromaDB.
-
-    Accepts a list of files (path + content) and upserts them into a
-    collection named after ``repo_name``.  Safe to call repeatedly —
-    existing chunks for the same file paths will be overwritten.
-    """
+    """Chunk, embed, and store a repository's source files in MongoDB (Atlas Vector Search)."""
     uid = current_user["uid"]
     user_settings = await db.user_settings.find_one({"uid": uid})
     gemini_api_key = None
@@ -126,9 +120,10 @@ async def ingest_repository(
         gemini_api_key = user_settings.get("gemini_api_key")
         openai_api_key = user_settings.get("openai_api_key")
 
+    rag = RAGService(db)
     try:
         files_as_dicts = [f.model_dump() for f in body.files]
-        chunks_upserted = await _rag.ingest_repository(
+        chunks_upserted = await rag.ingest_repository(
             body.repo_name,
             files_as_dicts,
             gemini_api_key=gemini_api_key,
@@ -153,21 +148,15 @@ async def ingest_repository(
 # ---------------------------------------------------------------------------
 @router.get("/collections")
 async def list_collections(
+    db: AsyncIOMotorDatabase = Depends(get_mongo_db),
     current_user: dict = Depends(get_firebase_user),
 ) -> dict:
-    """Return the names of all ChromaDB collections (ingested repositories).
-
-    The frontend uses this to populate the repo_name dropdown in the
-    Repository Q&A tab without the user needing to remember exact names.
-
-    Returns::
-
-        {"collections": ["owner_my-repo", "another_project"]}
-    """
+    """Return the names of all ingested repositories from MongoDB code_chunks."""
+    rag = RAGService(db)
     try:
-        collections = _rag.list_collections()
+        collections = await rag.list_collections()
     except Exception as exc:
-        logger.exception("Failed to list ChromaDB collections")
+        logger.exception("Failed to list collections")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Could not list collections: {exc}",
@@ -176,7 +165,7 @@ async def list_collections(
 
 
 # ---------------------------------------------------------------------------
-# POST /query  — legacy streaming SSE endpoint (kept for backwards compat)
+# POST /query  — legacy SSE endpoint (backwards compat)
 # ---------------------------------------------------------------------------
 @router.post("/query")
 async def query_repository(
@@ -194,18 +183,14 @@ async def query_repository(
         openai_api_key = user_settings.get("openai_api_key")
 
     return StreamingResponse(
-        _rag_event_stream(
-            body,
-            gemini_api_key=gemini_api_key,
-            openai_api_key=openai_api_key,
-        ),
+        _rag_event_stream(body, db, gemini_api_key=gemini_api_key, openai_api_key=openai_api_key),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 # ---------------------------------------------------------------------------
-# POST /repository  — semantic, SSE-streaming repo Q&A (primary route)
+# POST /repository  — primary SSE-streaming repo Q&A route
 # ---------------------------------------------------------------------------
 @router.post("/repository")
 async def repository_chat(
@@ -213,20 +198,18 @@ async def repository_chat(
     db: AsyncIOMotorDatabase = Depends(get_mongo_db),
     current_user: dict = Depends(get_firebase_user),
 ) -> StreamingResponse:
-    """Repository Q&A via RAG + LLM streaming.
+    """Repository Q&A via MongoDB Atlas Vector Search + LLM streaming.
 
     Workflow:
-        1. Embed the user's ``query`` with Gemini / OpenAI embeddings.
-        2. Perform a cosine-similarity search in the ChromaDB collection
-           named after ``repo_name``.
-        3. Build a context-augmented prompt and stream the LLM answer back
-           as Server-Sent Events.
+        1. Embed the user query with Gemini gemini-embedding-001.
+        2. Run $vectorSearch aggregation against the code_chunks collection.
+        3. Build a context-augmented prompt and stream the LLM answer as SSE.
 
     SSE events emitted:
-        context — JSON array of ``ContextChunk`` dicts (sources)
+        context — JSON array of ContextChunk dicts (sources)
         token   — one LLM markdown token
         done    — empty terminator
-        error   — inline error message (no HTTP 4xx/5xx thrown)
+        error   — inline error message
     """
     uid = current_user["uid"]
     user_settings = await db.user_settings.find_one({"uid": uid})
@@ -237,11 +220,7 @@ async def repository_chat(
         openai_api_key = user_settings.get("openai_api_key")
 
     return StreamingResponse(
-        _rag_event_stream(
-            body,
-            gemini_api_key=gemini_api_key,
-            openai_api_key=openai_api_key,
-        ),
+        _rag_event_stream(body, db, gemini_api_key=gemini_api_key, openai_api_key=openai_api_key),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

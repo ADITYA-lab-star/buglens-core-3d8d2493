@@ -1,143 +1,170 @@
-import asyncio
+"""
+RAG Service — MongoDB Atlas Vector Search backend.
+
+Replaces the ChromaDB implementation with MongoDB Atlas Vector Search so that
+embeddings are stored and queried inside the same Atlas cluster used for
+reviews and user settings.
+
+Architecture
+------------
+- Ingestion  : ingest_mongo.py (CLI script, run once per repo)
+- Embedding  : Gemini gemini-embedding-001 via REST (3072-dim vectors)
+- Storage    : MongoDB collection ``code_chunks``
+- Index      : Atlas Vector Search index named ``vector_index`` on ``embedding`` field
+- Query      : $vectorSearch aggregation pipeline
+"""
+
 import logging
-from pathlib import Path
 from typing import Any
 
-import chromadb
-import tiktoken
+import httpx
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.services.embeddings import get_embedding
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — must match what ingest_mongo.py used
 # ---------------------------------------------------------------------------
-CHROMA_PERSIST_DIR = ".chroma_db"          # local persistent storage path
-EMBEDDING_MODEL    = "text-embedding-3-small"
-CHUNK_TOKEN_LIMIT  = 400                   # max tokens per chunk
-CHUNK_OVERLAP      = 40                    # overlapping tokens between chunks
-TOP_K              = 5                     # number of chunks returned per query
-ENCODING_NAME      = "cl100k_base"        # tiktoken encoding compatible with text-embedding-3-small
+EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIMS  = 3072
+TOP_K           = 5
+ATLAS_INDEX     = "vector_index"          # name of your Atlas Vector Search index
+
+GEMINI_EMBED_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    f"{EMBEDDING_MODEL}:embedContent"
+)
 
 
 # ---------------------------------------------------------------------------
-# Token-aware chunker
+# Embedding helper (single vector — used for query-time embedding)
 # ---------------------------------------------------------------------------
-def _chunk_code(text: str, limit: int = CHUNK_TOKEN_LIMIT, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Split *text* into overlapping token-bounded chunks.
 
-    Falls back to line-based chunking when the tiktoken encoding cannot be
-    loaded (e.g., offline environments without the tiktoken BPE data).
-    """
-    try:
-        enc = tiktoken.get_encoding(ENCODING_NAME)
-        tokens = enc.encode(text)
-        chunks: list[str] = []
-        start = 0
-        while start < len(tokens):
-            end = min(start + limit, len(tokens))
-            chunks.append(enc.decode(tokens[start:end]))
-            start += limit - overlap
-        return [c for c in chunks if c.strip()]
-    except Exception as exc:
-        logger.warning("tiktoken chunking failed (%s), falling back to line chunking.", exc)
-        lines = text.splitlines()
-        chunks = []
-        step = max(limit // 10, 1)
-        for i in range(0, len(lines), step - overlap // 10):
-            chunk = "\n".join(lines[i : i + step])
-            if chunk.strip():
-                chunks.append(chunk)
-        return chunks
+async def _embed_query(text: str, api_key: str) -> list[float]:
+    """Embed a single query string using Gemini gemini-embedding-001 (3072-dim)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            GEMINI_EMBED_URL,
+            params={"key": api_key},
+            json={
+                "model": f"models/{EMBEDDING_MODEL}",
+                "content": {"parts": [{"text": text.replace("\n", " ")}]},
+                "taskType": "RETRIEVAL_QUERY",   # query-side task type
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["embedding"]["values"]
 
 
 # ---------------------------------------------------------------------------
 # RAGService
 # ---------------------------------------------------------------------------
+
 class RAGService:
-    """Manages code ingestion and semantic retrieval via ChromaDB + OpenAI embeddings."""
+    """Semantic retrieval over ingested repositories via MongoDB Atlas Vector Search."""
 
-    def __init__(self) -> None:
-        self._client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+    def __init__(self, db: AsyncIOMotorDatabase) -> None:
+        self._db = db
 
-    def _collection(self, repo_name: str) -> chromadb.Collection:
-        """Return (or create) the ChromaDB collection for *repo_name*.
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-        Collection names follow the regex ``^[a-zA-Z0-9_-]+$`` so we sanitize
-        the repo_name by replacing slashes and dots with underscores.
-        """
-        safe_name = repo_name.replace("/", "_").replace(".", "_")
-        return self._client.get_or_create_collection(
-            name=safe_name,
-            metadata={"hnsw:space": "cosine"},
-        )
+    def _get_api_key(
+        self,
+        gemini_api_key: str | None,
+    ) -> str:
+        key = gemini_api_key or settings.GEMINI_API_KEY
+        if not key:
+            raise RuntimeError(
+                "No Gemini API key available. Set GEMINI_API_KEY in .env "
+                "or add your own key in Settings."
+            )
+        return key
 
-    def list_collections(self) -> list[str]:
-        """Return the names of all ChromaDB collections in the persistent store.
+    # ------------------------------------------------------------------
+    # list_collections — returns distinct repo names in code_chunks
+    # ------------------------------------------------------------------
 
-        Each name corresponds to a previously ingested repository.
-        The raw ChromaDB collection names use underscores in place of slashes/dots.
-        """
+    async def list_collections(self) -> list[str]:
+        """Return the names of all ingested repositories."""
         try:
-            return [col.name for col in self._client.list_collections()]
+            repos = await self._db.code_chunks.distinct("repository_name")
+            return sorted(repos)
         except Exception as exc:
             logger.warning("list_collections failed: %s", exc)
             return []
 
     # ------------------------------------------------------------------
-    # Public API
+    # ingest_repository — kept for API compatibility (delegates to CLI)
     # ------------------------------------------------------------------
 
     async def ingest_repository(
         self,
         repo_name: str,
-        files: list[dict[str, str]],  # [{"path": "src/foo.py", "content": "..."}]
+        files: list[dict[str, str]],
         gemini_api_key: str | None = None,
         openai_api_key: str | None = None,
     ) -> int:
-        """Chunk, embed, and upsert all *files* into the repo's collection.
+        """Lightweight in-process ingestion (for small payloads via API).
 
-        Args:
-            repo_name: Used as the ChromaDB collection name.
-            files:     List of dicts with ``path`` and ``content`` keys.
-            gemini_api_key: Optional custom Gemini API key.
-            openai_api_key: Optional custom OpenAI API key.
-
-        Returns:
-            Total number of chunks upserted.
+        For large repos use ingest_mongo.py CLI instead which is
+        rate-limit-aware and has resume support.
         """
-        collection = self._collection(repo_name)
-        total_upserted = 0
+        api_key = self._get_api_key(gemini_api_key)
+        collection = self._db.code_chunks
+        total = 0
 
         for file_info in files:
             file_path: str = file_info.get("path", "unknown")
-            content: str   = file_info.get("content", "")
-
+            content: str = file_info.get("content", "")
             if not content.strip():
                 continue
 
-            chunks = _chunk_code(content)
-            logger.info("Ingesting %s → %d chunk(s)", file_path, len(chunks))
+            # Simple line-based chunking for API ingestion
+            lines = content.splitlines(keepends=True)
+            chunks: list[str] = []
+            chunk: list[str] = []
+            token_est = 0
+            for line in lines:
+                lt = max(1, len(line) // 4)
+                if token_est + lt > 400 and chunk:
+                    chunks.append("".join(chunk))
+                    chunk = []
+                    token_est = 0
+                chunk.append(line)
+                token_est += lt
+            if chunk:
+                chunks.append("".join(chunk))
 
-            # Embed all chunks concurrently for this file
-            embeddings: list[list[float]] = await asyncio.gather(
-                *[get_embedding(chunk, gemini_api_key=gemini_api_key, openai_api_key=openai_api_key) for chunk in chunks]
-            )
+            for idx, chunk_text in enumerate(chunks):
+                if not chunk_text.strip():
+                    continue
+                try:
+                    vector = await _embed_query(chunk_text, api_key)
+                except Exception as exc:
+                    logger.warning("Embedding failed for %s chunk %d: %s", file_path, idx, exc)
+                    continue
 
-            ids       = [f"{file_path}::chunk_{i}" for i in range(len(chunks))]
-            metadatas = [{"file_path": file_path, "chunk_index": i} for i in range(len(chunks))]
+                await collection.insert_one({
+                    "repository_name": repo_name,
+                    "file_path": file_path,
+                    "text": chunk_text,
+                    "chunk_index": idx,
+                    "embedding": vector,
+                    "embedding_model": EMBEDDING_MODEL,
+                    "token_count": max(1, len(chunk_text) // 4),
+                })
+                total += 1
 
-            collection.upsert(
-                ids=ids,
-                embeddings=embeddings,
-                documents=chunks,
-                metadatas=metadatas,
-            )
-            total_upserted += len(chunks)
+        logger.info("API ingest '%s': %d chunks inserted.", repo_name, total)
+        return total
 
-        logger.info("Ingestion complete for '%s': %d total chunks.", repo_name, total_upserted)
-        return total_upserted
+    # ------------------------------------------------------------------
+    # query_repository — Atlas $vectorSearch pipeline
+    # ------------------------------------------------------------------
 
     async def query_repository(
         self,
@@ -147,45 +174,59 @@ class RAGService:
         gemini_api_key: str | None = None,
         openai_api_key: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Semantically search the repo collection and return the top-k chunks.
+        """Semantically search *repo_name* and return the top-k chunks.
 
-        Args:
-            repo_name:  The collection to search.
-            user_query: The natural-language question or code fragment.
-            top_k:      Number of results to return.
-            gemini_api_key: Optional custom Gemini API key.
-            openai_api_key: Optional custom OpenAI API key.
+        Uses MongoDB Atlas $vectorSearch aggregation pipeline.
 
-        Returns:
-            A list of dicts, each containing ``document``, ``file_path``,
-            ``chunk_index``, and ``distance``.
+        Returns
+        -------
+        List of dicts with keys: ``document``, ``file_path``,
+        ``chunk_index``, ``distance``.
         """
-        collection = self._collection(repo_name)
-        query_embedding = await get_embedding(
-            user_query,
-            gemini_api_key=gemini_api_key,
-            openai_api_key=openai_api_key,
-        )
+        api_key = self._get_api_key(gemini_api_key)
 
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-        )
+        # 1. Embed the user query
+        try:
+            query_vector = await _embed_query(user_query, api_key)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to embed query: {exc}") from exc
 
-        output: list[dict[str, Any]] = []
-        documents  = results.get("documents",  [[]])[0]
-        metadatas  = results.get("metadatas",  [[]])[0]
-        distances  = results.get("distances",  [[]])[0]
-
-        for doc, meta, dist in zip(documents, metadatas, distances):
-            output.append(
-                {
-                    "document":    doc,
-                    "file_path":   meta.get("file_path", "unknown"),
-                    "chunk_index": meta.get("chunk_index", 0),
-                    "distance":    round(dist, 4),
+        # 2. Run Atlas Vector Search pipeline
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": ATLAS_INDEX,
+                    "path": "embedding",
+                    "queryVector": query_vector,
+                    "numCandidates": top_k * 10,
+                    "limit": top_k,
+                    "filter": {"repository_name": repo_name},
                 }
-            )
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "text": 1,
+                    "file_path": 1,
+                    "chunk_index": 1,
+                    "score": {"$meta": "vectorSearchScore"},
+                }
+            },
+        ]
 
-        return output
+        try:
+            cursor = self._db.code_chunks.aggregate(pipeline)
+            results = await cursor.to_list(length=top_k)
+        except Exception as exc:
+            logger.error("Atlas vectorSearch failed: %s", exc)
+            raise RuntimeError(f"Vector search failed: {exc}") from exc
+
+        return [
+            {
+                "document":    r.get("text", ""),
+                "file_path":   r.get("file_path", "unknown"),
+                "chunk_index": r.get("chunk_index", 0),
+                "distance":    round(1 - r.get("score", 1), 4),  # cosine: score→distance
+            }
+            for r in results
+        ]

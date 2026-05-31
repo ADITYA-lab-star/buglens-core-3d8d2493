@@ -107,7 +107,7 @@ async def github_webhook(
             2. Sends the diff to the configured LLM for a structured review.
             3. Posts the formatted review as a comment on the PR timeline.
     """
-    # Retrieve user-specific webhook secret and GitHub token from MongoDB if user_id is provided
+    # Retrieve user-specific secrets and tokens from MongoDB (falls back to env vars)
     webhook_secret = settings.GITHUB_WEBHOOK_SECRET
     github_access_token = settings.GITHUB_ACCESS_TOKEN
     gemini_api_key = None
@@ -116,10 +116,16 @@ async def github_webhook(
     if user_id:
         user_settings = await db.user_settings.find_one({"uid": user_id})
         if user_settings:
-            webhook_secret = user_settings.get("webhook_secret", webhook_secret)
-            github_access_token = user_settings.get("github_access_token", github_access_token)
-            gemini_api_key = user_settings.get("gemini_api_key")
-            openai_api_key = user_settings.get("openai_api_key")
+            # Use github_webhook_secret (32-char hex) for HMAC verification.
+            # Falls back to legacy webhook_secret field for older documents.
+            webhook_secret = (
+                user_settings.get("github_webhook_secret")
+                or user_settings.get("webhook_secret")
+                or webhook_secret
+            )
+            github_access_token = user_settings.get("github_access_token") or github_access_token
+            gemini_api_key = user_settings.get("gemini_api_key") or None
+            openai_api_key = user_settings.get("openai_api_key") or None
         else:
             logger.warning("No user settings found in MongoDB for user_id=%s. Using fallback credentials.", user_id)
 
