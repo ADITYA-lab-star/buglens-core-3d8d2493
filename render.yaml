@@ -1,52 +1,44 @@
 # =============================================================================
-# render.yaml — BugLens Infrastructure (Infrastructure-as-Code)
+# render.yaml — BugLens Backend (Infrastructure-as-Code)
 #
 # Docs: https://render.com/docs/yaml-spec
 #
-# Deploy: connect this repo in the Render dashboard and Render will read this
-# file automatically.  Set secret env vars (DATABASE_URL, OPENAI_API_KEY, etc.)
-# in the Render dashboard under Environment — never commit them here.
+# Deploy: connect this repo in the Render dashboard — Render reads this file
+# automatically.  Set all secret env vars in the Render dashboard under
+# Environment → Secret Files/Vars. Never commit secrets here.
 # =============================================================================
 
 services:
-  # ---------------------------------------------------------------------------
-  # FastAPI backend — buglens-api
-  # ---------------------------------------------------------------------------
   - type: web
     name: buglens-api
     runtime: python
     rootDir: backend
 
-    # Install dependencies
+    # Install Python dependencies
     buildCommand: pip install -r requirements.txt
 
     # Render injects $PORT automatically; binding 0.0.0.0 is required.
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
-    # Use the free tier to start; upgrade to Standard for production SLAs.
     plan: free
 
-    # Health-check endpoint (matches the /health route in app/main.py)
+    # Health-check endpoint
     healthCheckPath: /health
 
-    # Environment variables — non-secret defaults only.
-    # Secret values (API keys, DATABASE_URL) must be set in the Render UI.
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
-      # Allow the React frontend deployed on Netlify (and local dev) to call
-      # this API.  Replace with your actual Netlify URL after first deploy.
-      - key: ALLOWED_ORIGINS
-        value: "https://buglens.netlify.app,http://localhost:5173,http://localhost:8080"
 
-    # -------------------------------------------------------------------------
-    # Persistent disk — keeps ChromaDB data across deploys and restarts.
-    #
-    # Render's ephemeral filesystem is wiped on every deploy; without a disk
-    # the vector store would be lost.  The mount path must match the path the
-    # FastAPI app (RAGService / ChromaDB client) reads from.
-    # -------------------------------------------------------------------------
-    disk:
-      name: chroma-data
-      mountPath: /opt/render/project/src/backend/.chroma_db
-      sizeGB: 1        # increase when the index grows beyond ~500k vectors
+      # Replace with your actual Cloudflare Pages URL after deploy
+      - key: ALLOWED_ORIGINS
+        value: "https://buglens.pages.dev,http://localhost:5173"
+
+      # ----------------------------------------------------------------
+      # Secret variables — set these in the Render dashboard, NOT here
+      # ----------------------------------------------------------------
+      # MONGODB_URL                  = mongodb+srv://...
+      # GEMINI_API_KEY               = AIzaSy...
+      # OPENAI_API_KEY               = sk-...  (optional)
+      # GITHUB_WEBHOOK_SECRET        = (any fallback secret)
+      # GITHUB_ACCESS_TOKEN          = github_pat_...
+      # FIREBASE_SERVICE_ACCOUNT_JSON = {"type": "service_account", ...}
