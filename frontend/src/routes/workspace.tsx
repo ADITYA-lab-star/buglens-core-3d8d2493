@@ -546,13 +546,30 @@ function EmptyChatState() {
 
 // ─── Main WorkspacePage ───────────────────────────────────────────────────────
 function WorkspacePage() {
-  const [code, setCode] = useState("");
-  const [language, setLanguage] = useState("javascript");
-  const [model, setModel] = useState("gemini");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [code, setCode] = useState(() => localStorage.getItem("workspace_code") || "");
+  const [language, setLanguage] = useState(() => localStorage.getItem("workspace_lang") || "javascript");
+  const [model, setModel] = useState(() => localStorage.getItem("workspace_model") || "gemini");
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem("workspace_messages");
+      if (saved) {
+        return JSON.parse(saved).map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
+      }
+    } catch { /* ignore */ }
+    return [];
+  });
   const [isReviewing, setIsReviewing] = useState(false);
   const [severity, setSeverity] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<0 | 1>(0);
+  const [activeTab, setActiveTab] = useState<0 | 1>(() => {
+    return Number(localStorage.getItem("workspace_tab")) === 1 ? 1 : 0;
+  });
+
+  // Persist state
+  useEffect(() => localStorage.setItem("workspace_code", code), [code]);
+  useEffect(() => localStorage.setItem("workspace_lang", language), [language]);
+  useEffect(() => localStorage.setItem("workspace_model", model), [model]);
+  useEffect(() => localStorage.setItem("workspace_messages", JSON.stringify(messages)), [messages]);
+  useEffect(() => localStorage.setItem("workspace_tab", String(activeTab)), [activeTab]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
