@@ -82,32 +82,86 @@ def _build_review_comment(analysis: dict) -> str:
 """
 
 
+import asyncio
+from fastapi import BackgroundTasks
+
+async def process_pr_review_background_task(
+    repo_full_name: str,
+    pull_number: int,
+    github_access_token: str | None,
+    gemini_api_key: str | None,
+    openai_api_key: str | None,
+):
+    """Background task to fetch diff, analyze code with fallbacks, and post comment."""
+    logger.info("Background task started for PR #%s in %s", pull_number, repo_full_name)
+    
+    github = GitHubService(access_token=github_access_token)
+    try:
+        diff_text: str = await github.get_pr_diff(repo_full_name, pull_number)
+    except Exception as exc:
+        logger.error("Failed to fetch PR diff: %s", exc)
+        return
+
+    if not diff_text.strip():
+        logger.info("Empty diff for PR #%s — skipping review.", pull_number)
+        return
+
+    # Try Gemini first, fallback to OpenAI. Retry up to 3 times.
+    models_to_try = [("gemini", gemini_api_key), ("openai", openai_api_key)]
+    analysis = None
+    
+    for attempt in range(1, 4):
+        for model_name, api_key in models_to_try:
+            try:
+                llm = get_llm_service(model_name, api_key=api_key)
+                analysis = await llm.analyze_code(diff_text, language="diff")
+                analysis["model"] = model_name
+                logger.info("Successfully analyzed PR #%s using %s (Attempt %s)", pull_number, model_name, attempt)
+                break
+            except Exception as exc:
+                logger.warning("LLM %s failed on attempt %s: %s", model_name, attempt, exc)
+                
+        if analysis:
+            break
+            
+        if attempt < 3:
+            logger.warning("All models failed on attempt %s. Retrying in 10s...", attempt)
+            await asyncio.sleep(10)
+            
+    if not analysis:
+        logger.error("Fatal: Background task failed to get AI review after all retries.")
+        return
+
+    comment_body = _build_review_comment(analysis)
+    try:
+        await github.post_pr_comment(repo_full_name, pull_number, comment_body)
+        logger.info("Successfully posted AI review comment on PR #%s", pull_number)
+    except Exception as exc:
+        logger.error("Failed to post PR comment to GitHub: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
-@router.post("/github", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/github", status_code=status.HTTP_202_ACCEPTED)
 async def github_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     user_id: str | None = None,
     x_hub_signature_256: str | None = Header(default=None),
     x_github_event: str | None = Header(default=None),
     db: AsyncIOMotorDatabase = Depends(get_mongo_db),
-) -> None:
-    """Receive and process GitHub webhook events.
+) -> dict:
+    """Receive and process GitHub webhook events asynchronously.
 
     Security:
-        Verifies the ``X-Hub-Signature-256`` header using HMAC-SHA256 and the
-        user-specific ``webhook_secret`` from the database (or fallback env secret)
-        before any processing.
+        Verifies the ``X-Hub-Signature-256`` header using HMAC-SHA256 before any processing.
 
     Handled events:
-        - ``pull_request`` with action ``opened`` or ``synchronize``:
-            1. Fetches the PR diff via the GitHub REST API.
-            2. Sends the diff to the configured LLM for a structured review.
-            3. Posts the formatted review as a comment on the PR timeline.
+        - ``pull_request`` with action ``opened``, ``synchronize``, or ``reopened``:
+            Queues a BackgroundTask to securely fetch the diff and analyze it with retries.
     """
-    # Retrieve user-specific secrets and tokens from MongoDB (falls back to env vars)
     webhook_secret = settings.GITHUB_WEBHOOK_SECRET
     github_access_token = settings.GITHUB_ACCESS_TOKEN
     gemini_api_key = None
@@ -116,8 +170,6 @@ async def github_webhook(
     if user_id:
         user_settings = await db.user_settings.find_one({"uid": user_id})
         if user_settings:
-            # Use github_webhook_secret (32-char hex) for HMAC verification.
-            # Falls back to legacy webhook_secret field for older documents.
             webhook_secret = (
                 user_settings.get("github_webhook_secret")
                 or user_settings.get("webhook_secret")
@@ -127,87 +179,38 @@ async def github_webhook(
             gemini_api_key = user_settings.get("gemini_api_key") or None
             openai_api_key = user_settings.get("openai_api_key") or None
         else:
-            logger.warning("No user settings found in MongoDB for user_id=%s. Using fallback credentials.", user_id)
+            logger.warning("No user settings found for user_id=%s.", user_id)
 
-    # ---- 1. Read raw body for signature verification -----------------------
     payload_bytes: bytes = await request.body()
     _verify_signature(payload_bytes, x_hub_signature_256, webhook_secret)
 
-    # ---- 2. Parse payload ---------------------------------------------------
     try:
         payload: dict[str, Any] = json.loads(payload_bytes)
     except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON payload.",
-        )
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
 
-    # ---- 3. Filter relevant events -----------------------------------------
-    print(f"DEBUG: x_github_event={x_github_event}")
     if x_github_event != "pull_request":
-        logger.info("Skipping non-pull_request event: %s", x_github_event)
-        return  # 204 No Content — acknowledged but not processed
+        return {"status": "ignored", "reason": f"event '{x_github_event}' not handled"}
 
     action: str = payload.get("action", "")
-    print(f"DEBUG: action={action}")
     if action not in ("opened", "synchronize", "reopened"):
-        logger.info("Skipping pull_request action: %s", action)
-        return
+        return {"status": "ignored", "reason": f"action '{action}' not handled"}
 
-    # ---- 4. Extract PR metadata --------------------------------------------
     try:
         repo_full_name: str = payload["repository"]["full_name"]
         pull_number: int = payload["number"]
-        pr_url: str = payload["pull_request"]["url"]
     except KeyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Missing expected field in payload: {exc}",
-        )
+        raise HTTPException(status_code=422, detail=f"Missing expected field: {exc}")
 
-    logger.info(
-        "Processing PR #%s (%s) for %s (action=%s)", 
-        pull_number, pr_url, repo_full_name, action
+    logger.info("Queueing PR #%s for background analysis...", pull_number)
+    
+    background_tasks.add_task(
+        process_pr_review_background_task,
+        repo_full_name=repo_full_name,
+        pull_number=pull_number,
+        github_access_token=github_access_token,
+        gemini_api_key=gemini_api_key,
+        openai_api_key=openai_api_key,
     )
-
-    # ---- 5. Fetch the PR diff ----------------------------------------------
-    github = GitHubService(access_token=github_access_token)
-    try:
-        diff_text: str = await github.get_pr_diff(repo_full_name, pull_number)
-    except Exception as exc:
-        logger.error("Failed to fetch PR diff: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not fetch PR diff from GitHub: {exc}",
-        )
-
-    if not diff_text.strip():
-        print(f"DEBUG: empty diff for PR {pull_number}")
-        logger.info("Empty diff for PR #%s — skipping review.", pull_number)
-        return
-    else:
-        print(f"DEBUG: diff length is {len(diff_text)}")
-
-    # ---- 6. Run AI review on the diff --------------------------------------
-    llm = get_llm_service("gemini", api_key=gemini_api_key)  # Using Gemini for PR webhook reviews
-    try:
-        analysis: dict = await llm.analyze_code(diff_text, language="diff")
-        analysis["model"] = "gemini"
-    except Exception as exc:
-        logger.error("LLM analysis failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI review failed: {exc}",
-        )
-
-    # ---- 7. Post the review comment to GitHub ------------------------------
-    comment_body = _build_review_comment(analysis)
-    try:
-        await github.post_pr_comment(repo_full_name, pull_number, comment_body)
-        logger.info("Posted AI review comment on PR #%s", pull_number)
-    except Exception as exc:
-        logger.error("Failed to post PR comment: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not post review comment to GitHub: {exc}",
-        )
+    
+    return {"status": "queued", "message": f"PR #{pull_number} review started in the background."}
