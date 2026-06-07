@@ -128,7 +128,7 @@ export function Settings() {
   const payloadUrl = useMemo(() => {
     const domain = window.location.origin.includes("localhost")
       ? "https://your-api-domain.com"
-      : window.location.origin;
+      : BACKEND_URL;
     return `${domain}/api/v1/webhook/github?user_id=${user?.uid ?? "USER_UID"}`;
   }, [user?.uid]);
 
