@@ -63,10 +63,9 @@ export function Settings() {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-        });
         if (res.ok && active) {
           const data = await res.json();
-          setWebhookSecret(data.webhook_secret || "");
+          setWebhookSecret(data.github_webhook_secret || data.webhook_secret || "");
           setGithubToken(data.github_access_token || "");
           setOpenaiKey(data.openai_api_key || "");
           setGeminiKey(data.gemini_api_key || "");
@@ -102,7 +101,7 @@ export function Settings() {
       });
       if (res.ok) {
         const data = await res.json();
-        setWebhookSecret(data.webhook_secret || "");
+        setWebhookSecret(data.github_webhook_secret || data.webhook_secret || "");
         setGithubToken(data.github_access_token || "");
         setOpenaiKey(data.openai_api_key || "");
         setGeminiKey(data.gemini_api_key || "");
