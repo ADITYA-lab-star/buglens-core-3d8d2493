@@ -63,6 +63,7 @@ export function Settings() {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
+        });
         if (res.ok && active) {
           const data = await res.json();
           setWebhookSecret(data.github_webhook_secret || data.webhook_secret || "");
