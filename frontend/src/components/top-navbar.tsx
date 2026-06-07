@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Moon, Sun, ChevronRight, Search, LogOut } from "lucide-react";
+import { Moon, Sun, ChevronRight, LogOut } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -51,11 +51,7 @@ export function TopNavbar({ crumbs }: { crumbs: { label: string; to?: string }[]
       </nav>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="hidden lg:flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground w-72">
-          <Search className="size-3.5" />
-          <span>Search repos, reviews…</span>
-          <kbd className="ml-auto rounded bg-background px-1.5 py-0.5 text-[10px] font-mono border border-border">⌘K</kbd>
-        </div>
+
 
         <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
           {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
