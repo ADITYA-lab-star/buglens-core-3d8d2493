@@ -662,30 +662,56 @@ function DashboardPage() {
           </Card>
         </div>
 
-        {/* ── Quick-action hint strip ───────────────────────────────────── */}
-        <div className="flex items-center justify-between rounded-xl border border-border/40 bg-card/30 px-5 py-3.5">
-          <div className="flex items-center gap-3">
-            <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
-              <Zap className="size-4" />
+        {/* ── Quick-action hint strips ───────────────────────────────────── */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="flex items-center justify-between rounded-xl border border-border/40 bg-card/30 px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
+                <Zap className="size-4" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Ready to review code?
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Paste a snippet in the Workspace.
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-medium text-foreground">
-                Ready to review code?
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Paste a snippet or upload a file in the Workspace.
-              </p>
-            </div>
+            <Button
+              id="goto-workspace-btn"
+              size="sm"
+              variant="outline"
+              className="gap-2 text-xs shrink-0"
+              onClick={() => window.location.assign("/workspace")}
+            >
+              Open Workspace
+            </Button>
           </div>
-          <Button
-            id="goto-workspace-btn"
-            size="sm"
-            variant="outline"
-            className="gap-2 text-xs"
-            onClick={() => window.location.assign("/workspace")}
-          >
-            Open Workspace
-          </Button>
+
+          <div className="flex items-center justify-between rounded-xl border border-border/40 bg-card/30 px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <div className="grid size-8 place-items-center rounded-lg bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20">
+                <GitPullRequest className="size-4" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Automate GitHub PRs
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Set up a Webhook to review PRs automatically.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2 text-xs shrink-0"
+              onClick={() => window.location.assign("/settings")}
+            >
+              Configure
+            </Button>
+          </div>
         </div>
 
       </div>
