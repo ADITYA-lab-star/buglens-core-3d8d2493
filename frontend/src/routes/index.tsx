@@ -157,14 +157,12 @@ function Index() {
           </p>
           
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Button size="lg" className="h-14 px-8 text-base bg-white text-black hover:bg-white/90 shadow-[0_0_40px_rgba(255,255,255,0.15)] transition-all gap-2 group w-full sm:w-auto rounded-xl">
-              <Github className="size-5 transition-transform group-hover:scale-110" />
-              Connect GitHub
-            </Button>
-            <Button size="lg" variant="outline" className="h-14 px-8 text-base border-white/10 bg-white/5 hover:bg-white/10 text-white transition-all gap-2 w-full sm:w-auto rounded-xl backdrop-blur-sm">
-              <Play className="size-4" />
-              Try Demo
-            </Button>
+            <Link to="/login" className="w-full sm:w-auto">
+              <Button size="lg" className="h-14 px-8 text-base bg-white text-black hover:bg-white/90 shadow-[0_0_40px_rgba(255,255,255,0.15)] transition-all gap-2 group w-full rounded-xl">
+                <Github className="size-5 transition-transform group-hover:scale-110" />
+                Connect GitHub
+              </Button>
+            </Link>
           </div>
         </section>
 
