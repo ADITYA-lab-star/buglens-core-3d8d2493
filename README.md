@@ -1,154 +1,97 @@
-# BugLens 🐛🔍
+<div align="center">
+  <img src="https://img.shields.io/badge/Status-Live-success" alt="Status" />
+  <img src="https://img.shields.io/badge/Frontend-React%20%7C%20Vite-blue" alt="Frontend" />
+  <img src="https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python-green" alt="Backend" />
+  <img src="https://img.shields.io/badge/Database-MongoDB-47A248" alt="Database" />
 
-> An advanced, AI-powered platform for automated code reviews, PR analysis, and repository-wide Q&A.
-
-**BugLens** acts as your personal Staff-Level AI Code Reviewer. By seamlessly integrating with GitHub and utilizing state-of-the-art LLMs (Gemini, OpenAI, Claude), BugLens analyzes pull requests, flags bugs, highlights security vulnerabilities, suggests performance optimizations, and provides an interactive chat interface to let you "talk" to your codebase.
-
----
-
-## 🌟 Key Features
-
-* **Multi-Model AI Reviews**: Dynamic switching between LLMs (Gemini, OpenAI, Claude) for code analysis.
-* **Automated GitHub PR Importer & Webhooks**: Directly import a PR URL or set up webhooks to automatically review GitHub Pull Requests as they are opened.
-* **Repository Q&A (RAG)**: Ingest entire repositories into a local vector database (ChromaDB) and chat with your codebase using Retrieval-Augmented Generation.
-* **Multi-Tenant Credentials**: Bring your own keys! Users can override system API keys securely in the dashboard for localized usage.
-* **Real-time Streaming**: Utilizes Server-Sent Events (SSE) to stream live LLM analysis tokens directly to the frontend.
-* **Premium Dashboard UI**: Built with React, TailwindCSS, and shadcn/ui components, featuring dark mode, code syntax highlighting, and an intuitive layout.
+  <h1>🐛 BugLens</h1>
+  <p><strong>The AI-Powered Code Review Engine</strong></p>
+  
+  <p>
+    BugLens is an enterprise-grade AI coding assistant platform that automatically analyzes your pull requests and code snippets for bugs, security vulnerabilities, performance bottlenecks, and clean code violations using state-of-the-art Large Language Models.
+  </p>
+</div>
 
 ---
 
-## 🛠️ Technology Stack
+## ✨ Features
 
-### **Frontend**
-* **Framework**: React via [TanStack Start](https://tanstack.com/start) & [Vite](https://vitejs.dev/)
-* **Styling**: TailwindCSS & [shadcn/ui](https://ui.shadcn.com/)
-* **Auth**: Firebase Authentication (Google, GitHub, Email/Password)
-* **Deployment**: Cloudflare Pages / Workers
+- **🤖 Multi-Model AI Engine**: Seamlessly switch between OpenAI (GPT-4o) and Google (Gemini 1.5 Pro) for your reviews.
+- **⚡ Real-time GitHub Automation**: Instantly analyzes code diffs on every Pull Request via Webhooks.
+- **🛡️ Secure HMAC Verification**: Enterprise-grade webhook security ensuring payloads are strictly from GitHub.
+- **📊 Developer Dashboard**: Visual analytics, severity breakdowns, and a history of all AI reviews.
+- **🛠️ Manual Workspace**: Paste code snippets or drop files into the workspace for instant manual analysis.
 
-### **Backend**
-* **Framework**: Python 3 & [FastAPI](https://fastapi.tiangolo.com/)
-* **Database**: MongoDB (async storage) & ChromaDB (Vector database)
-* **AI Tooling**: `google-generativeai`, `openai`, `anthropic`, custom prompt engineering.
-* **Auth Verification**: Firebase Admin SDK
+## 🏗️ Architecture
 
----
+BugLens is built on a modern, fully-decoupled architecture.
 
-## 📂 Project Structure
-
-```text
-buglens/
-├── frontend/               # React / Vite frontend application
-│   ├── src/                # Components, Pages, Context, Hooks
-│   ├── package.json        # Node dependencies
-│   └── wrangler.jsonc      # Cloudflare deployment config
-├── backend/                # FastAPI backend application
-│   ├── app/
-│   │   ├── api/            # Route endpoints (reviews, chat, webhooks, etc.)
-│   │   ├── core/           # Firebase, Config, and Prompts
-│   │   ├── db/             # MongoDB connection logic
-│   │   ├── schemas/        # Pydantic validation models
-│   │   └── services/       # LLM Factory, GitHub Service, RAG Service, Embeddings
-│   ├── main.py             # FastAPI application entry point
-│   └── requirements.txt    # Python dependencies
-└── README.md               # You are here
-```
-
----
-
-## 🚀 Getting Started (Local Development)
-
-### Prerequisites
-* **Node.js** (v18+)
-* **Python** (v3.10+)
-* **MongoDB** (Local instance or MongoDB Atlas)
-* **Firebase Project** (Client Config & Admin Service Account JSON)
-
-### 1. Backend Setup
-
-1. **Navigate to backend and create a virtual environment**:
-   ```bash
-   cd backend
-   python -m venv venv
-   source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Configure Environment Variables**:
-   Create a `.env` file in the `backend/` directory (DO NOT commit this file):
-   ```ini
-   # Firebase Admin SDK Credentials
-   FIREBASE_SERVICE_ACCOUNT_JSON={"type": "service_account", ...}
-   
-   # MongoDB Connection
-   MONGODB_URL="mongodb+srv://..."
-   
-   # System Fallback AI Keys
-   GEMINI_API_KEY="AIzaSy..."
-   OPENAI_API_KEY="sk-proj-..."
-   ```
-
-4. **Run the FastAPI server**:
-   ```bash
-   uvicorn app.main:app --reload --port 8000
-   ```
-
-### 2. Frontend Setup
-
-1. **Navigate to the frontend**:
-   ```bash
-   cd frontend
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment Variables**:
-   Create a `.env.local` file in the `frontend/` directory (DO NOT commit this file):
-   ```ini
-   # Firebase Client Config
-   VITE_FIREBASE_API_KEY="..."
-   VITE_FIREBASE_AUTH_DOMAIN="..."
-   VITE_FIREBASE_PROJECT_ID="..."
-   VITE_FIREBASE_STORAGE_BUCKET="..."
-   VITE_FIREBASE_MESSAGING_SENDER_ID="..."
-   VITE_FIREBASE_APP_ID="..."
-
-   # Backend Connection
-   VITE_API_URL="http://localhost:8000/api/v1"
-   VITE_BACKEND_URL="http://localhost:8000"
-   ```
-
-4. **Start the development server**:
-   ```bash
-   npm run dev
-   ```
-
----
-
-## ☁️ Deployment
-
-### Frontend (Cloudflare)
-The frontend is optimized to be deployed on Cloudflare Pages or Workers.
-1. Connect your repository to Cloudflare.
-2. Set the build command to `npm run build`.
-3. Provide the `VITE_FIREBASE_*` and backend URL variables inside **Settings > Builds & Deployments > Build environment variables**.
+### Frontend
+- **Framework**: React 18, Vite, TypeScript
+- **Styling**: Tailwind CSS, Radix UI, shadcn/ui
+- **State/Routing**: TanStack Router, React Query
+- **Hosting**: Cloudflare Pages
 
 ### Backend
-The backend can be deployed via Docker, Render, Railway, or any standard VPS.
-1. Ensure the production environment exposes the necessary `.env` secrets.
-2. Bind the server to host `0.0.0.0` and standard HTTP/HTTPS ports using `gunicorn` with Uvicorn workers.
+- **Framework**: FastAPI (Python 3.12+)
+- **Database**: MongoDB (via Motor AsyncIO)
+- **AI Integrations**: Native Gemini & OpenAI SDKs
+- **Architecture**: Repository Pattern, Background Tasks for Webhooks
+- **Hosting**: Render
 
----
+## 🚀 Getting Started
 
-## 🔐 Security & Privacy
-BugLens implements strict filtering and error sanitization (`_sanitize_error`) to ensure that no LLM API keys (OpenAI, Gemini, Claude, or GitHub access tokens) are ever leaked in API tracebacks, error messages, or SSE stream chunks. Custom user tokens remain encrypted in the database and are utilized entirely in-memory during RAG queries and Code Reviews.
+### 1. Clone the repository
+```bash
+git clone https://github.com/ADITYA-lab-star/buglens-core-3d8d2493.git
+cd buglens-core-3d8d2493
+```
 
----
+### 2. Backend Setup
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # Or `.\venv\Scripts\activate` on Windows
+pip install -r requirements.txt
+```
+Create a `.env` file in the `backend/` directory:
+```env
+MONGODB_URL="mongodb+srv://<user>:<password>@cluster.mongodb.net"
+GITHUB_WEBHOOK_SECRET="your_fallback_webhook_secret"
+```
+Run the backend server:
+```bash
+uvicorn app.main:app --reload --port 8000
+```
 
-*Built by the Advanced Agentic Coding Team.*
+### 3. Frontend Setup
+```bash
+cd frontend
+npm install
+```
+Create a `.env` file in the `frontend/` directory:
+```env
+VITE_BACKEND_URL="http://localhost:8000"
+```
+Start the development server:
+```bash
+npm run dev
+```
+
+## 🔌 Webhook Configuration
+
+BugLens can automatically review Pull Requests on any GitHub repository. 
+
+1. Log into your BugLens dashboard and navigate to **Settings**.
+2. Copy your unique **Webhook URL** and the 64-character **HMAC Secret**.
+3. Go to your GitHub Repository -> **Settings** -> **Webhooks** -> **Add Webhook**.
+4. Paste the URL and Secret.
+5. Select **Content type**: `application/json`.
+6. Select **Let me select individual events**, and check **Pull requests**.
+7. Click **Add Webhook**. 
+
+BugLens will now automatically post AI code reviews directly to your GitHub PRs!
+
+## 📜 License
+
+This project is proprietary and confidential.
