@@ -98,7 +98,7 @@ class GitHubService:
         List of dicts: ``{"path": str, "sha": str, "size": int}``
         — filtered to indexable source files only.
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             for attempt_branch in (branch, "master", "main"):
                 url = (
                     f"{GITHUB_API_BASE}/repos/{repo_full_name}/git/trees/"
@@ -162,7 +162,7 @@ class GitHubService:
         headers = {**self._headers, "Accept": "application/vnd.github.raw+json"}
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 resp = await client.get(url, headers=headers)
                 if resp.status_code != 200:
                     return None
