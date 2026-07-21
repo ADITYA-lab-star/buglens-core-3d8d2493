@@ -207,7 +207,7 @@ export function RepoIngest({ onSuccess, onClose }: RepoIngestProps) {
                 repo_name?: string;
                 files_indexed?: number;
               };
-              const finalRepoName = data.repo_name ?? repoName.trim() || githubUrl;
+              const finalRepoName = data.repo_name ?? (repoName.trim() || githubUrl);
               setProgress((prev) => ({
                 ...prev,
                 phase: "done",
