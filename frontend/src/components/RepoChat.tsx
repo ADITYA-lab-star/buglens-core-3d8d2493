@@ -37,11 +37,13 @@ import {
   X,
   AlertCircle,
   Sparkles,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/api";
 import { getIdToken } from "@/context/AuthContext";
+import { RepoIngest } from "@/components/RepoIngest";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -760,6 +762,7 @@ export function RepoChatPanel({ isActive }: RepoChatPanelProps) {
   });
   const [model, setModel] = useState("gemini");
   const [inputValue, setInputValue] = useState("");
+  const [showIngest, setShowIngest] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -840,9 +843,9 @@ export function RepoChatPanel({ isActive }: RepoChatPanelProps) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* ── Header: repo selector ──────────────────────────────────────── */}
-      <div className="shrink-0 border-b border-border bg-card/20 px-4 py-2.5">
-        <div className="flex items-center gap-2">
+      {/* ── Header: repo selector + ingest toggle ──────────────────── */}
+      <div className="shrink-0 border-b border-border bg-card/20">
+        <div className="flex items-center gap-2 px-4 py-2.5">
           <RepoSelector
             collections={collections}
             isLoading={collectionsLoading}
@@ -850,6 +853,20 @@ export function RepoChatPanel({ isActive }: RepoChatPanelProps) {
             onChange={setSelectedRepo}
             onRefresh={fetchCollections}
           />
+          {/* Index Repo toggle */}
+          <button
+            id="repo-index-toggle-btn"
+            onClick={() => setShowIngest((v) => !v)}
+            title="Index a GitHub repository"
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs transition-colors",
+              showIngest
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border/60 bg-card/50 text-muted-foreground hover:bg-card hover:text-foreground"
+            )}
+          >
+            <Plus className="size-3.5" />
+          </button>
           {messages.length > 0 && (
             <button
               id="repo-clear-chat-btn"
@@ -861,6 +878,20 @@ export function RepoChatPanel({ isActive }: RepoChatPanelProps) {
             </button>
           )}
         </div>
+
+        {/* Ingest panel — shown when toggled */}
+        {showIngest && (
+          <RepoIngest
+            onClose={() => setShowIngest(false)}
+            onSuccess={(newRepoName) => {
+              // Refresh collections list and auto-select the newly indexed repo
+              fetchCollections().then(() => {
+                setSelectedRepo(newRepoName);
+                setShowIngest(false);
+              });
+            }}
+          />
+        )}
       </div>
 
       {/* ── Messages ───────────────────────────────────────────────────── */}

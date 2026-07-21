@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,15 +13,31 @@ from app.schemas.chat import (
     ChatQueryRequest,
     ChatQueryResponse,
     ContextChunk,
+    GitHubIngestRequest,
     IngestRequest,
     IngestResponse,
 )
+from app.services.github_service import GitHubService
 from app.services.llm_factory import get_llm_service
-from app.services.rag_service import RAGService
+from app.services.rag_service import MAX_FILES_FRONTEND, RAGService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Helper: parse a GitHub URL → "owner/repo"
+# ---------------------------------------------------------------------------
+_GITHUB_URL_RE = re.compile(
+    r"https?://github\.com/([a-zA-Z0-9_.\-]+/[a-zA-Z0-9_.\-]+?)(?:\.git|/.*)?$"
+)
+
+
+def _parse_github_url(url: str) -> str | None:
+    """Return 'owner/repo' from a GitHub URL, or None if invalid."""
+    m = _GITHUB_URL_RE.match(url.strip())
+    return m.group(1) if m else None
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +46,7 @@ router = APIRouter()
 async def _rag_event_stream(
     body: ChatQueryRequest,
     db: AsyncIOMotorDatabase,
+    uid: str,
     gemini_api_key: str | None = None,
     openai_api_key: str | None = None,
 ) -> AsyncIterator[str]:
@@ -36,22 +54,23 @@ async def _rag_event_stream(
 
     Yields:
         event: context  — JSON array of retrieved ContextChunks
-        event: token    — individual LLM markdown tokens
+        event: token    — individual LLM markdown tokens (json.dumps encoded)
         event: done     — empty terminator
         event: error    — on failure
     """
     rag = RAGService(db)
 
-    # 1. Atlas Vector Search
+    # 1. Atlas Vector Search — scoped to this user's data
     try:
         raw_chunks = await rag.query_repository(
             body.repo_name,
             body.query,
+            uid=uid,
             gemini_api_key=gemini_api_key,
             openai_api_key=openai_api_key,
         )
     except Exception as exc:
-        logger.exception("Atlas vector search failed for '%s'", body.repo_name)
+        logger.exception("Atlas vector search failed for '%s' (uid=%s)", body.repo_name, uid)
         yield f"event: error\ndata: Vector search failed: {exc}\n\n"
         yield "event: done\ndata: \n\n"
         return
@@ -59,7 +78,7 @@ async def _rag_event_stream(
     if not raw_chunks:
         yield (
             f"event: error\ndata: No indexed content found for repository "
-            f"'{body.repo_name}'. Run ingest_mongo.py first.\n\n"
+            f"'{body.repo_name}'. Index it first using the '+ Index Repo' button.\n\n"
         )
         yield "event: done\ndata: \n\n"
         return
@@ -105,7 +124,115 @@ async def _rag_event_stream(
 
 
 # ---------------------------------------------------------------------------
-# POST /ingest
+# Helper: fetch all files from a GitHub repo and stream ingestion progress
+# ---------------------------------------------------------------------------
+async def _github_ingest_stream(
+    body: GitHubIngestRequest,
+    db: AsyncIOMotorDatabase,
+    uid: str,
+    gemini_api_key: str | None,
+    openai_api_key: str | None,
+) -> AsyncIterator[str]:
+    """SSE generator for POST /ingest-github.
+
+    Yields:
+        event: progress — JSON with phase/fetched/total/file fields
+        event: done     — JSON with chunks_upserted, repo_name, files_indexed
+        event: error    — error message string
+    """
+
+    # 1. Validate and parse the GitHub URL
+    repo_full_name = _parse_github_url(body.github_url)
+    if not repo_full_name:
+        yield (
+            f"event: error\ndata: {json.dumps('Invalid GitHub URL. '
+            'Expected format: https://github.com/owner/repo')}\n\n"
+        )
+        yield "event: done\ndata: \n\n"
+        return
+
+    repo_name = (body.repo_name or "").strip() or repo_full_name
+
+    github = GitHubService()
+
+    # 2. Fetch the file tree
+    yield (
+        f"event: progress\ndata: {json.dumps({'phase': 'fetching_tree', "
+        f"'message': f'Fetching file tree for {repo_full_name}…'})}\n\n"
+    )
+    try:
+        files_meta = await github.get_repo_tree(repo_full_name)
+    except Exception as exc:
+        yield f"event: error\ndata: {json.dumps(f'Failed to fetch repo tree: {exc}')}\n\n"
+        yield "event: done\ndata: \n\n"
+        return
+
+    if not files_meta:
+        yield f"event: error\ndata: {json.dumps('No indexable source files found in this repository.')}\n\n"
+        yield "event: done\ndata: \n\n"
+        return
+
+    # Cap file count to avoid runaway embedding costs
+    if len(files_meta) > MAX_FILES_FRONTEND:
+        files_meta = files_meta[:MAX_FILES_FRONTEND]
+        logger.info(
+            "GitHub ingest capped at %d files for repo '%s' (uid=%s)",
+            MAX_FILES_FRONTEND,
+            repo_full_name,
+            uid,
+        )
+
+    total_files = len(files_meta)
+    yield (
+        f"event: progress\ndata: {json.dumps({'phase': 'fetching_files', 'fetched': 0, "
+        f"'total': total_files, 'message': f'Found {total_files} files to fetch'})}\n\n"
+    )
+
+    # 3. Fetch file contents one by one (streaming progress per file)
+    files: list[dict] = []
+    for i, meta in enumerate(files_meta):
+        content = await github.get_file_content(repo_full_name, meta["sha"])
+        if content and content.strip():
+            files.append({"path": meta["path"], "content": content})
+
+        yield (
+            f"event: progress\ndata: {json.dumps({'phase': 'fetching_files', "
+            f"'fetched': i + 1, 'total': total_files, 'file': meta['path']})}\n\n"
+        )
+
+    if not files:
+        yield f"event: error\ndata: {json.dumps('Could not read any file contents from this repository.')}\n\n"
+        yield "event: done\ndata: \n\n"
+        return
+
+    # 4. Chunk + batch-embed + store — stream progress from the RAG service
+    rag = RAGService(db)
+    total_chunks_upserted = 0
+
+    async for event in rag.ingest_repository_streaming(
+        repo_name,
+        files,
+        uid=uid,
+        gemini_api_key=gemini_api_key,
+        openai_api_key=openai_api_key,
+    ):
+        if event["type"] == "error":
+            yield f"event: error\ndata: {json.dumps(event['message'])}\n\n"
+            yield "event: done\ndata: \n\n"
+            return
+        elif event["type"] == "done":
+            total_chunks_upserted = event["chunks_upserted"]
+        elif event["type"] == "progress":
+            yield f"event: progress\ndata: {json.dumps(event)}\n\n"
+
+    yield (
+        f"event: done\ndata: {json.dumps({'chunks_upserted': total_chunks_upserted, "
+        f"'repo_name': repo_name, 'files_indexed': len(files)})}\n\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /ingest  — direct file ingestion (API / admin use)
 # ---------------------------------------------------------------------------
 @router.post("/ingest", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED)
 async def ingest_repository(
@@ -128,6 +255,7 @@ async def ingest_repository(
         chunks_upserted = await rag.ingest_repository(
             body.repo_name,
             files_as_dicts,
+            uid=uid,
             gemini_api_key=gemini_api_key,
             openai_api_key=openai_api_key,
         )
@@ -146,17 +274,52 @@ async def ingest_repository(
 
 
 # ---------------------------------------------------------------------------
-# GET /collections  — list all ingested repositories
+# POST /ingest-github  — frontend GitHub repo ingestion (SSE)
+# ---------------------------------------------------------------------------
+@router.post("/ingest-github")
+async def ingest_github_repository(
+    body: GitHubIngestRequest,
+    db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    current_user: dict = Depends(get_firebase_user),
+) -> StreamingResponse:
+    """Fetch a GitHub repository by URL and ingest it for the authenticated user.
+
+    Streams real-time progress via SSE so the frontend can show a live
+    progress bar as files are fetched and embedded.
+
+    SSE events emitted:
+        progress — JSON with phase / fetched / total / file fields
+        done     — JSON with chunks_upserted, repo_name, files_indexed
+        error    — JSON-encoded error message string
+    """
+    uid = current_user["uid"]
+    user_settings = await db.user_settings.find_one({"uid": uid})
+    gemini_api_key = None
+    openai_api_key = None
+    if user_settings:
+        gemini_api_key = user_settings.get("gemini_api_key")
+        openai_api_key = user_settings.get("openai_api_key")
+
+    return StreamingResponse(
+        _github_ingest_stream(body, db, uid, gemini_api_key, openai_api_key),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /collections  — list repos ingested by the current user
 # ---------------------------------------------------------------------------
 @router.get("/collections")
 async def list_collections(
     db: AsyncIOMotorDatabase = Depends(get_mongo_db),
     current_user: dict = Depends(get_firebase_user),
 ) -> dict:
-    """Return the names of all ingested repositories from MongoDB code_chunks."""
+    """Return the names of all repositories ingested by the current user."""
+    uid = current_user["uid"]
     rag = RAGService(db)
     try:
-        collections = await rag.list_collections()
+        collections = await rag.list_collections(uid=uid)
     except Exception as exc:
         logger.exception("Failed to list collections")
         raise HTTPException(
@@ -185,7 +348,11 @@ async def query_repository(
         openai_api_key = user_settings.get("openai_api_key")
 
     return StreamingResponse(
-        _rag_event_stream(body, db, gemini_api_key=gemini_api_key, openai_api_key=openai_api_key),
+        _rag_event_stream(
+            body, db, uid,
+            gemini_api_key=gemini_api_key,
+            openai_api_key=openai_api_key,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -204,12 +371,13 @@ async def repository_chat(
 
     Workflow:
         1. Embed the user query with Gemini gemini-embedding-001.
-        2. Run $vectorSearch aggregation against the code_chunks collection.
+        2. Run $vectorSearch aggregation against the code_chunks collection,
+           scoped to the authenticated user's data.
         3. Build a context-augmented prompt and stream the LLM answer as SSE.
 
     SSE events emitted:
         context — JSON array of ContextChunk dicts (sources)
-        token   — one LLM markdown token
+        token   — one LLM markdown token (json.dumps encoded)
         done    — empty terminator
         error   — inline error message
     """
@@ -222,7 +390,11 @@ async def repository_chat(
         openai_api_key = user_settings.get("openai_api_key")
 
     return StreamingResponse(
-        _rag_event_stream(body, db, gemini_api_key=gemini_api_key, openai_api_key=openai_api_key),
+        _rag_event_stream(
+            body, db, uid,
+            gemini_api_key=gemini_api_key,
+            openai_api_key=openai_api_key,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

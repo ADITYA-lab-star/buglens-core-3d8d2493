@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional
 
 
@@ -16,6 +16,17 @@ class IngestResponse(BaseModel):
     repo_name: str
     chunks_upserted: int
     message: str
+
+
+class GitHubIngestRequest(BaseModel):
+    github_url: str = Field(
+        ...,
+        description="Public or private GitHub repository URL, e.g. 'https://github.com/owner/repo'",
+    )
+    repo_name: Optional[str] = Field(
+        None,
+        description="Custom display name for this repo. Defaults to 'owner/repo' from the URL.",
+    )
 
 
 class ChatQueryRequest(BaseModel):
