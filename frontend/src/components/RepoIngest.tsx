@@ -202,6 +202,7 @@ export function RepoIngest({ onSuccess, onClose }: RepoIngestProps) {
             }
           } else if (eventType === "done") {
             try {
+              if (!dataLine.trim()) throw new Error("Empty done payload");
               const data = JSON.parse(dataLine) as {
                 chunks_upserted?: number;
                 repo_name?: string;
@@ -216,7 +217,7 @@ export function RepoIngest({ onSuccess, onClose }: RepoIngestProps) {
               }));
               onSuccess(finalRepoName);
             } catch {
-              setProgress((prev) => ({ ...prev, phase: "done" }));
+              setProgress((prev) => (prev.phase === "error" ? prev : { ...prev, phase: "done" }));
             }
           } else if (eventType === "error") {
             let errMsg = dataLine;
