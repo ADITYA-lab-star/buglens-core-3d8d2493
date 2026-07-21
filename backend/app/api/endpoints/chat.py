@@ -156,10 +156,8 @@ async def _github_ingest_stream(
     github = GitHubService()
 
     # 2. Fetch the file tree
-    yield (
-        f"event: progress\ndata: {json.dumps({'phase': 'fetching_tree', "
-        f"'message': f'Fetching file tree for {repo_full_name}…'})}\n\n"
-    )
+    _tree_payload = json.dumps({"phase": "fetching_tree", "message": f"Fetching file tree for {repo_full_name}…"})
+    yield f"event: progress\ndata: {_tree_payload}\n\n"
     try:
         files_meta = await github.get_repo_tree(repo_full_name)
     except Exception as exc:
@@ -183,10 +181,8 @@ async def _github_ingest_stream(
         )
 
     total_files = len(files_meta)
-    yield (
-        f"event: progress\ndata: {json.dumps({'phase': 'fetching_files', 'fetched': 0, "
-        f"'total': total_files, 'message': f'Found {total_files} files to fetch'})}\n\n"
-    )
+    _found_payload = json.dumps({"phase": "fetching_files", "fetched": 0, "total": total_files, "message": f"Found {total_files} files to fetch"})
+    yield f"event: progress\ndata: {_found_payload}\n\n"
 
     # 3. Fetch file contents one by one (streaming progress per file)
     files: list[dict] = []
@@ -195,10 +191,8 @@ async def _github_ingest_stream(
         if content and content.strip():
             files.append({"path": meta["path"], "content": content})
 
-        yield (
-            f"event: progress\ndata: {json.dumps({'phase': 'fetching_files', "
-            f"'fetched': i + 1, 'total': total_files, 'file': meta['path']})}\n\n"
-        )
+        _file_payload = json.dumps({"phase": "fetching_files", "fetched": i + 1, "total": total_files, "file": meta["path"]})
+        yield f"event: progress\ndata: {_file_payload}\n\n"
 
     if not files:
         yield f"event: error\ndata: {json.dumps('Could not read any file contents from this repository.')}\n\n"
@@ -225,10 +219,8 @@ async def _github_ingest_stream(
         elif event["type"] == "progress":
             yield f"event: progress\ndata: {json.dumps(event)}\n\n"
 
-    yield (
-        f"event: done\ndata: {json.dumps({'chunks_upserted': total_chunks_upserted, "
-        f"'repo_name': repo_name, 'files_indexed': len(files)})}\n\n"
-    )
+    _done_payload = json.dumps({"chunks_upserted": total_chunks_upserted, "repo_name": repo_name, "files_indexed": len(files)})
+    yield f"event: done\ndata: {_done_payload}\n\n"
 
 
 # ---------------------------------------------------------------------------
