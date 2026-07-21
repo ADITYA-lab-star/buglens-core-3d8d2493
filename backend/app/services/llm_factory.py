@@ -290,37 +290,19 @@ class GeminiService(LLMService):
         return payload
 
     def _extract_text_from_candidate(self, candidate: dict) -> str:
-        if not isinstance(candidate, dict):
+        """Extract streamed text from a Gemini REST API candidate object.
+
+        The real Gemini streamGenerateContent response shape is:
+            {"content": {"parts": [{"text": "..."}], "role": "model"}}
+        """
+        try:
+            content = candidate.get("content", {})
+            parts = content.get("parts", []) if isinstance(content, dict) else []
+            return "".join(
+                p.get("text", "") for p in parts if isinstance(p, dict)
+            )
+        except Exception:
             return ""
-        output = candidate.get("output") or []
-        if isinstance(output, dict):
-            output = [output]
-        if output:
-            first = output[0]
-            content = first.get("content") or []
-            if isinstance(content, dict):
-                content = [content]
-            texts = []
-            for block in content:
-                if isinstance(block, dict):
-                    text = block.get("text")
-                    if text:
-                        texts.append(text)
-            if texts:
-                return "".join(texts)
-        # Fallback for message-style responses
-        content = candidate.get("content") or candidate.get("message", {}).get("content")
-        if isinstance(content, dict):
-            content = content.get("parts")
-        if not isinstance(content, list):
-            return ""
-        texts = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text")
-                if text:
-                    texts.append(text)
-        return "".join(texts)
 
     async def analyze_code(self, code: str, language: str) -> dict:
         user_msg = f"Language: {language}\n\n```\n{code}\n```"

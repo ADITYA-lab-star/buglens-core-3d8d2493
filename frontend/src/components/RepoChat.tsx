@@ -489,7 +489,13 @@ function RepoSelector({
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function RepoChatEmptyState({ hasRepo }: { hasRepo: boolean }) {
+function RepoChatEmptyState({
+  hasRepo,
+  onSelect,
+}: {
+  hasRepo: boolean;
+  onSelect: (q: string) => void;
+}) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center">
       <div className="relative">
@@ -515,12 +521,14 @@ function RepoChatEmptyState({ hasRepo }: { hasRepo: boolean }) {
             "What does the LLM factory do?",
             "Explain the RAG pipeline",
           ].map((q) => (
-            <div
+            <button
               key={q}
-              className="rounded-lg border border-border/60 bg-card/40 px-3 py-2 text-left"
+              type="button"
+              onClick={() => onSelect(q)}
+              className="rounded-lg border border-border/60 bg-card/40 px-3 py-2 text-left transition-colors hover:bg-card/80 hover:border-primary/30 cursor-pointer"
             >
               <p className="text-xs text-muted-foreground">{q}</p>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -651,7 +659,16 @@ function useRepoChat(repoName: string, model: string) {
                 /* ignore parse errors */
               }
             } else if (eventType === "token") {
-              const token = dataLine.replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
+              // The backend serialises each token with json.dumps(), so we
+              // use JSON.parse() here to correctly decode all escape sequences
+              // (newlines, backslashes, unicode, etc.) without any data loss.
+              let token: string;
+              try {
+                token = JSON.parse(dataLine) as string;
+              } catch {
+                // Fallback: treat as a plain string if somehow not valid JSON
+                token = dataLine;
+              }
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
@@ -849,7 +866,13 @@ export function RepoChatPanel({ isActive }: RepoChatPanelProps) {
       {/* ── Messages ───────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-thin">
         {messages.length === 0 ? (
-          <RepoChatEmptyState hasRepo={!!selectedRepo} />
+          <RepoChatEmptyState
+            hasRepo={!!selectedRepo}
+            onSelect={(q) => {
+              // Directly submit the suggested question
+              sendMessage(q);
+            }}
+          />
         ) : (
           messages.map((msg) => <RepoChatBubble key={msg.id} msg={msg} />)
         )}

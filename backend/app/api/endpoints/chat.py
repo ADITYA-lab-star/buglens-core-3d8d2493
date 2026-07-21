@@ -93,8 +93,10 @@ async def _rag_event_stream(
     llm = get_llm_service(body.preferred_model, api_key=llm_api_key)
     try:
         async for token in llm.stream_chat_with_context(augmented_query):
-            safe = token.replace("\\", "\\\\").replace("\n", "\\n")
-            yield f"event: token\ndata: {safe}\n\n"
+            # json.dumps produces a properly-escaped JSON string literal
+            # (including embedded newlines, backslashes, etc.) that the
+            # frontend can safely decode with JSON.parse().
+            yield f"event: token\ndata: {json.dumps(token)}\n\n"
     except Exception as exc:
         logger.exception("LLM streaming failed (model=%s)", body.preferred_model)
         yield f"event: error\ndata: {str(exc)}\n\n"

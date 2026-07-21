@@ -192,17 +192,23 @@ class RAGService:
             raise RuntimeError(f"Failed to embed query: {exc}") from exc
 
         # 2. Run Atlas Vector Search pipeline
+        #
+        # NOTE: The `filter` field *inside* $vectorSearch is only honoured when
+        # the Atlas index is configured with pre-filter fields.  To work with
+        # any index configuration we retrieve a larger candidate set and then
+        # narrow to the correct repository with a $match stage.
         pipeline = [
             {
                 "$vectorSearch": {
                     "index": ATLAS_INDEX,
                     "path": "embedding",
                     "queryVector": query_vector,
-                    "numCandidates": top_k * 10,
-                    "limit": top_k,
-                    "filter": {"repository_name": repo_name},
+                    "numCandidates": top_k * 20,   # wider candidate set to absorb post-filter loss
+                    "limit": top_k * 4,             # fetch more than needed; $match will trim
                 }
             },
+            # Filter AFTER the ANN search so it works for all index configurations
+            {"$match": {"repository_name": repo_name}},
             {
                 "$project": {
                     "_id": 0,
@@ -212,6 +218,7 @@ class RAGService:
                     "score": {"$meta": "vectorSearchScore"},
                 }
             },
+            {"$limit": top_k},
         ]
 
         try:
