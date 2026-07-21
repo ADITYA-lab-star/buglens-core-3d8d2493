@@ -34,9 +34,10 @@ class GitHubService:
     def __init__(self, access_token: str | None = None) -> None:
         token = access_token or settings.GITHUB_ACCESS_TOKEN
         self._headers = {
-            "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        if token:
+            self._headers["Authorization"] = f"Bearer {token}"
 
     # ------------------------------------------------------------------
     # Existing: PR diff / comment
