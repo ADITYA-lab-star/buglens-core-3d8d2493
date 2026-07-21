@@ -1,0 +1,13 @@
+
+
+1--In main.py i.e the entry point --- cors enabled for any origin ----allow_origins=["*"]----make it
+---for production the settings.cors_origins list should be used instead to whitelist only the Cloudflare Pages domain.   
+
+2--/webhook/github (singular), and was later changed to /webhooks/github (plural).
+---no need we can make  it normal
+
+3--What if a new API key format is introduced?" A: The regex patterns would need updating. A more robust approach would be to never include raw exceptions in API responses — use generic error messages and log details server-side.
+--- see if this can be implemented
+
+4--if user uses openai or anthropic options give an error to enter key
+--- do this definitly
