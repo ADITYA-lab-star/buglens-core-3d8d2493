@@ -8,7 +8,7 @@
   <p><strong>The AI-Powered Code Review Engine</strong></p>
   
   <p>
-    BugLens is an enterprise-grade AI coding assistant platform that automatically analyzes your pull requests and code snippets for bugs, security vulnerabilities, performance bottlenecks, and clean code violations using state-of-the-art Large Language Models.
+    BugLens is an AI coding assistant platform that automatically analyzes your pull requests and code snippets for bugs, security vulnerabilities, performance bottlenecks, and clean code violations using state-of-the-art Large Language Models.
   </p>
 </div>
 
@@ -92,6 +92,3 @@ BugLens can automatically review Pull Requests on any GitHub repository.
 
 BugLens will now automatically post AI code reviews directly to your GitHub PRs!
 
-## 📜 License
-
-This project is proprietary and confidential.
