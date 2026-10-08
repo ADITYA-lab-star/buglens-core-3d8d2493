@@ -106,8 +106,22 @@ async def process_pr_review_background_task(
         logger.info("Empty diff for PR #%s — skipping review.", pull_number)
         return
 
-    # Try Gemini first, fallback to OpenAI. Retry up to 3 times.
-    models_to_try = [("gemini", gemini_api_key), ("openai", openai_api_key)]
+    # Try Gemini first, fallback to others only if they have valid keys configured.
+    models_to_try = []
+    gemini_key = gemini_api_key or settings.GEMINI_API_KEY
+    if gemini_key and gemini_key != "dummy-key":
+        models_to_try.append(("gemini", gemini_api_key))
+        
+    openai_key = openai_api_key or settings.OPENAI_API_KEY
+    if openai_key and openai_key != "dummy-key":
+        models_to_try.append(("openai", openai_api_key))
+        
+    claude_key = getattr(settings, "ANTHROPIC_API_KEY", "")
+    if claude_key and claude_key != "dummy-key":
+        models_to_try.append(("claude", None))
+        
+    if not models_to_try:
+        models_to_try.append(("gemini", None))
     analysis = None
     
     for attempt in range(1, 4):

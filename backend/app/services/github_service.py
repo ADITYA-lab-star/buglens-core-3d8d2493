@@ -1,5 +1,7 @@
 import logging
 import os
+import io
+import zipfile
 import httpx
 from app.core.config import settings
 
@@ -110,6 +112,9 @@ class GitHubService:
                     break
                 if resp.status_code == 404:
                     continue
+                if resp.status_code == 403:
+                    logger.warning("GitHub API rate limit exceeded (403) for %s. Falling back to zip download...", repo_full_name)
+                    return await self._get_repo_zip_fallback(repo_full_name, branch)
                 resp.raise_for_status()
             else:
                 raise RuntimeError(
@@ -172,3 +177,58 @@ class GitHubService:
         except (UnicodeDecodeError, Exception) as exc:
             logger.debug("Skipping file sha=%s: %s", sha, exc)
             return None
+
+    async def _get_repo_zip_fallback(self, repo_full_name: str, branch: str) -> list[dict]:
+        """Download the repository as a ZIP file, extract it in-memory, and return the files.
+        This is a fallback for when the GitHub API rate limit is exceeded (403), as downloading
+        the ZIP is a regular web request and does not count against the standard API limits.
+        """
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            for attempt_branch in (branch, "master", "main"):
+                url = f"https://github.com/{repo_full_name}/archive/refs/heads/{attempt_branch}.zip"
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    break
+                if resp.status_code == 404:
+                    continue
+                resp.raise_for_status()
+            else:
+                raise RuntimeError(f"Could not fetch zip for '{repo_full_name}'")
+            
+            indexable: list[dict] = []
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+                for file_info in z.infolist():
+                    if file_info.is_dir():
+                        continue
+                        
+                    # Remove the root folder name (e.g., repo-main/)
+                    parts = file_info.filename.split("/", 1)
+                    if len(parts) < 2:
+                        continue
+                    path = parts[1]
+                    
+                    # Apply same filters
+                    path_parts = path.split("/")
+                    if any(p in _IGNORED_DIRS for p in path_parts[:-1]):
+                        continue
+                        
+                    ext = os.path.splitext(path)[1].lower()
+                    if ext in _IGNORED_EXTENSIONS:
+                        continue
+                        
+                    if file_info.file_size > _MAX_FILE_BYTES:
+                        continue
+                        
+                    try:
+                        content = z.read(file_info).decode("utf-8")
+                        indexable.append({
+                            "path": path, 
+                            "sha": f"zip-{file_info.CRC}", 
+                            "size": file_info.file_size, 
+                            "content": content
+                        })
+                    except (UnicodeDecodeError, Exception) as exc:
+                        logger.debug("Skipping zip file %s: %s", path, exc)
+                        continue
+                        
+            return indexable

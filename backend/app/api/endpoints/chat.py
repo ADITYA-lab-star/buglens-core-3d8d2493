@@ -187,7 +187,11 @@ async def _github_ingest_stream(
     # 3. Fetch file contents one by one (streaming progress per file)
     files: list[dict] = []
     for i, meta in enumerate(files_meta):
-        content = await github.get_file_content(repo_full_name, meta["sha"])
+        if "content" in meta:
+            content = meta["content"]
+        else:
+            content = await github.get_file_content(repo_full_name, meta["sha"])
+            
         if content and content.strip():
             files.append({"path": meta["path"], "content": content})
 

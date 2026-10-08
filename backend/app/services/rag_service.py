@@ -62,22 +62,35 @@ CHUNK_OVERLAP        = 50
 
 async def _embed_query(text: str, api_key: str) -> list[float]:
     """Embed a single query string using Gemini gemini-embedding-001 (3072-dim)."""
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            GEMINI_EMBED_URL,
-            params={"key": api_key},
-            json={
-                "model": f"models/{EMBEDDING_MODEL}",
-                "content": {"parts": [{"text": text.replace("\n", " ")}]},
-                "taskType": "RETRIEVAL_QUERY",
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()["embedding"]["values"]
+    import asyncio
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    GEMINI_EMBED_URL,
+                    params={"key": api_key},
+                    json={
+                        "model": f"models/{EMBEDDING_MODEL}",
+                        "content": {"parts": [{"text": text.replace("\n", " ")}]},
+                        "taskType": "RETRIEVAL_QUERY",
+                    },
+                )
+                if resp.status_code in {429, 500, 502, 503, 504} and attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                resp.raise_for_status()
+                return resp.json()["embedding"]["values"]
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"Failed to embed query: {exc}") from exc
 
 
 async def _embed_batch(texts: list[str], api_key: str) -> list[list[float]]:
     """Embed a batch of texts using batchEmbedContents (more efficient)."""
+    import asyncio
     requests_payload = [
         {
             "model": f"models/{EMBEDDING_MODEL}",
@@ -86,14 +99,25 @@ async def _embed_batch(texts: list[str], api_key: str) -> list[list[float]]:
         }
         for t in texts
     ]
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            GEMINI_BATCH_EMBED_URL,
-            params={"key": api_key},
-            json={"requests": requests_payload},
-        )
-        resp.raise_for_status()
-        return [item["values"] for item in resp.json()["embeddings"]]
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    GEMINI_BATCH_EMBED_URL,
+                    params={"key": api_key},
+                    json={"requests": requests_payload},
+                )
+                if resp.status_code in {429, 500, 502, 503, 504} and attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                resp.raise_for_status()
+                return [item["values"] for item in resp.json()["embeddings"]]
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"Batch embed failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

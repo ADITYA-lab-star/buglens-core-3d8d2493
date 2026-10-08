@@ -307,72 +307,133 @@ class GeminiService(LLMService):
     async def analyze_code(self, code: str, language: str) -> dict:
         user_msg = f"Language: {language}\n\n```\n{code}\n```"
         # Increase max output tokens to 4096 to prevent truncation by reasoning/thinking models
-        payload  = self._build_payload(CODE_REVIEW_SYSTEM_PROMPT, user_msg, max_tokens=4096, json_mode=True)
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(self._generate_url(stream=False), json=payload)
-                resp.raise_for_status()
-                raw_text = self._extract_text_from_candidate(resp.json().get("candidates", [{}])[0])
-                
-                # Clean markdown codeblocks/fences if present
-                cleaned_text = raw_text.strip()
-                if cleaned_text.startswith("```json"):
-                    cleaned_text = cleaned_text[7:]
-                elif cleaned_text.startswith("```"):
-                    cleaned_text = cleaned_text[3:]
-                if cleaned_text.endswith("```"):
-                    cleaned_text = cleaned_text[:-3]
-                cleaned_text = cleaned_text.strip()
-                
-                return json.loads(cleaned_text)
-        except Exception as exc:
-            logger.exception("Gemini analyze_code failed")
-            raise RuntimeError(f"Gemini analyze_code error: {_sanitize_error(exc, self.api_key)}") from exc
+        payload  = self._build_payload(CODE_REVIEW_SYSTEM_PROMPT, user_msg, max_tokens=8192, json_mode=True)
+        
+        import asyncio
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.post(self._generate_url(stream=False), json=payload)
+                    if resp.status_code in {429, 500, 502, 503, 504} and attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    resp.raise_for_status()
+                    
+                    candidate = resp.json().get("candidates", [{}])[0]
+                    raw_text = self._extract_text_from_candidate(candidate)
+                    
+                    if not raw_text.strip():
+                        finish_reason = candidate.get("finishReason", "UNKNOWN")
+                        if finish_reason == "SAFETY":
+                            logger.warning("Gemini blocked response due to safety filters.")
+                            return {"summary": "Review blocked by safety filters.", "files": [], "risks": "none"}
+                        raise RuntimeError(f"Empty text response from Gemini (finishReason: {finish_reason})")
+                    
+                    # Clean markdown codeblocks/fences if present
+                    cleaned_text = raw_text.strip()
+                    if cleaned_text.startswith("```json"):
+                        cleaned_text = cleaned_text[7:]
+                    elif cleaned_text.startswith("```"):
+                        cleaned_text = cleaned_text[3:]
+                    if cleaned_text.endswith("```"):
+                        cleaned_text = cleaned_text[:-3]
+                    cleaned_text = cleaned_text.strip()
+                    
+                    try:
+                        return json.loads(cleaned_text)
+                    except json.JSONDecodeError as jde:
+                        logger.warning("JSON Decode Error from Gemini (attempt %d). Snippet: %s", attempt, cleaned_text[:50])
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        raise
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in {429, 500, 502, 503, 504} and attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                logger.exception("Gemini analyze_code failed")
+                raise RuntimeError(f"Gemini analyze_code error: {_sanitize_error(exc, self.api_key)}") from exc
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                logger.exception("Gemini analyze_code failed")
+                raise RuntimeError(f"Gemini analyze_code error: {_sanitize_error(exc, self.api_key)}") from exc
 
     async def stream_analysis(self, code: str, language: str) -> AsyncIterator[str]:
         user_msg = f"Language: {language}\n\n```\n{code}\n```"
         payload  = self._build_payload(STREAMING_REVIEW_SYSTEM_PROMPT, user_msg, max_tokens=2000)
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream("POST", self._generate_url(stream=True), json=payload) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                chunk = json.loads(data_str)
-                                candidate = chunk.get("candidates", [{}])[0]
-                                text = self._extract_text_from_candidate(candidate)
-                                if text:
-                                    yield text
-                            except json.JSONDecodeError:
-                                continue
-        except Exception as exc:
-            logger.exception("Gemini stream_analysis failed")
-            yield f"\n\n[Error: {_sanitize_error(exc, self.api_key)}]"
+        
+        import asyncio
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    async with client.stream("POST", self._generate_url(stream=True), json=payload) as resp:
+                        if resp.status_code in {429, 500, 502, 503, 504} and attempt < max_retries - 1:
+                            pass # Let it fall through to retry
+                        else:
+                            resp.raise_for_status()
+                            async for line in resp.aiter_lines():
+                                if line.startswith("data: "):
+                                    data_str = line[6:]
+                                    try:
+                                        chunk = json.loads(data_str)
+                                        candidate = chunk.get("candidates", [{}])[0]
+                                        text = self._extract_text_from_candidate(candidate)
+                                        if text:
+                                            yield text
+                                    except json.JSONDecodeError:
+                                        continue
+                            return
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                logger.exception("Gemini stream_analysis failed")
+                yield f"\n\n[Error: {_sanitize_error(exc, self.api_key)}]"
+                return
+                
+            await asyncio.sleep(2 ** attempt)
 
     async def stream_chat_with_context(
         self, augmented_prompt: str, language: str = "natural_language"
     ) -> AsyncIterator[str]:
         payload = self._build_payload(RAG_CHAT_SYSTEM_PROMPT, augmented_prompt, max_tokens=2000)
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream("POST", self._generate_url(stream=True), json=payload) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                chunk = json.loads(data_str)
-                                candidate = chunk.get("candidates", [{}])[0]
-                                text = self._extract_text_from_candidate(candidate)
-                                if text:
-                                    yield text
-                            except json.JSONDecodeError:
-                                continue
-        except Exception as exc:
-            logger.exception("Gemini stream_chat_with_context failed")
-            yield f"\n\n[Error: {_sanitize_error(exc, self.api_key)}]"
+        
+        import asyncio
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    async with client.stream("POST", self._generate_url(stream=True), json=payload) as resp:
+                        if resp.status_code in {429, 500, 502, 503, 504} and attempt < max_retries - 1:
+                            pass # Let it fall through to retry
+                        else:
+                            resp.raise_for_status()
+                            async for line in resp.aiter_lines():
+                                if line.startswith("data: "):
+                                    data_str = line[6:]
+                                    try:
+                                        chunk = json.loads(data_str)
+                                        candidate = chunk.get("candidates", [{}])[0]
+                                        text = self._extract_text_from_candidate(candidate)
+                                        if text:
+                                            yield text
+                                    except json.JSONDecodeError:
+                                        continue
+                            return # Success, exit generator completely
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                logger.exception("Gemini stream_chat_with_context failed")
+                yield f"\n\n[Error: {_sanitize_error(exc, self.api_key)}]"
+                return
+            
+            # Reached here only if status code was retryable
+            await asyncio.sleep(2 ** attempt)
 
 
 # ---------------------------------------------------------------------------
