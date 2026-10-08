@@ -257,7 +257,7 @@ class ClaudeService(LLMService):
 # ---------------------------------------------------------------------------
 class GeminiService(LLMService):
     BASE_URL  = "https://generativelanguage.googleapis.com/v1beta/models"
-    MODEL     = "gemini-2.5-flash"
+    MODEL     = "gemini-1.5-flash"
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or settings.GEMINI_API_KEY
